@@ -100,7 +100,13 @@ classdef TRYMPC < handle
 
 
       allowable_DAE_solver = ["ode15s","ode23t","ode15i"];
+
    end
+   % Immutables:
+   properties(SetAccess = immutable,Hidden)
+      
+   end
+  
 
    properties(Hidden,Dependent)
       % Evaluate objective value:
@@ -164,7 +170,7 @@ classdef TRYMPC < handle
          C.Name = class_instance_name;
 
          % Create unique ID for class intance:
-         C.ID = randi(10^7); % probably unique...
+         C.ID = C.generate_id; % probably unique...
 
          % Generate variables
          C.def_instance(names)
@@ -598,6 +604,9 @@ classdef TRYMPC < handle
             case "Implicit Euler"
                C.integrator.has_aux = true;
 
+               C.integrator.order = 1;
+               C.integrator.shooting_method = "simultaneous shooting";
+
                % Butcher Tableau:
                C.integrator.BT_b = 1;
                C.integrator.BT_A = 0;
@@ -620,7 +629,7 @@ classdef TRYMPC < handle
             case "IRK4"
                % error('OPS, IRK4 is not yet implemented. sorry.... ')
                C.integrator.order = 4;
-               C.integrator.shooting_method = "fully simultaneous shooting";
+               C.integrator.shooting_method = "simultaneous shooting";
                C.integrator.has_aux = true;
 
                % Butcher Tableau:
@@ -659,7 +668,7 @@ classdef TRYMPC < handle
                end
 
                C.integrator.order = "unknown";
-               C.integrator.shooting_method = "fully simultaneous shooting";
+               C.integrator.shooting_method = "simultaneous shooting";
                C.integrator.has_aux = true;
 
                % Butcher Tableau:
@@ -1806,12 +1815,11 @@ classdef TRYMPC < handle
          end
 
 
-         % Prepare random ID:
-         characters = ['A':'Z', 'a':'z', '0':'9'];
+         
 
          %%%%%%% Before simulating, prepare the sim_results struct
          C.archive.simulations{end+1} = C.simulation;
-         C.archive.simulations{end}.ID = string(characters(randi(numel(characters), [1, 6])));
+         C.archive.simulations{end}.ID = C.generate_id;
          C.archive.simulations{end}.stage = struct([]);
          C.archive.simulations{end}.sim.time = C.simulation.start_time;
          C.archive.simulations{end}.sim.state = C.simulation.initial_state;
@@ -2147,20 +2155,6 @@ classdef TRYMPC < handle
          end
 
          C.save_archive_optimization("optimization",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count)
-         % C.archive.optimizations{end+1}.ID = append("opt",num2str(randi(10^6)));
-         % C.archive.optimizations{end}.solver = "ipopt";
-         % C.archive.optimizations{end}.return_status = C.internal_mpc.solver.stats.return_status;
-         % C.archive.optimizations{end}.success_flag  = C.internal_mpc.solver.stats.success;
-         % C.archive.optimizations{end}.n_iterations  = C.internal_mpc.solver.stats.iter_count;
-         % C.archive.optimizations{end}.decision = solution.decision;
-         % C.archive.optimizations{end}.dual_eq   = solution.dual_eq;
-         % C.archive.optimizations{end}.dual_in   = solution.dual_in;
-         % C.archive.optimizations{end}.stats    = C.internal_mpc.solver.stats;
-         % C.archive.optimizations{end}.quadratic_cost = C.quadratic_cost;
-         % C.archive.optimizations{end}.parameters     = C.parameters;
-         % C.archive.optimizations{end}.Dt             = C.horizon.Dt;
-         % C.archive.optimizations{end}.ref            = C.internal_mpc.ref;
-         % C.archive.optimizations{end}.time = (0:C.horizon.N).*C.horizon.Dt;
          
          % Convergence Measure:
          C.internal_mpc.decision = C.internal_mpc.solution_ipopt.x;
@@ -2171,7 +2165,7 @@ classdef TRYMPC < handle
             disp(['      -- return status: ',C.internal_mpc.solver.stats.return_status])
             disp(['      --    solve time: ',sec2str(C.internal_mpc.solve_time.total)])
             disp(['      -- N. iterations: ',num2str(C.internal_mpc.solver.stats.iter_count)])
-            disp(['   Convergence Measure: ',num2str(C.archive.optimizations{end}.n_iterations)])
+            disp( '   Convergence Measure: ')
             disp(['              -- stationarity: ',num2str(stationarity)]) % C.archive.optimizations{end}.convergence.stationarity(end)
             disp(['              --     equality: ',num2str(equality)]) % C.archive.optimizations{end}.convergence.equality(end)
             disp(['              --   inequality: ',num2str(inequality)]) % C.archive.optimizations{end}.convergence.inequality(end)
@@ -2251,7 +2245,9 @@ classdef TRYMPC < handle
       function pre_initialize_ipopt(C)
          C.internal_mpc.S = structor(default_mix="TRYMPC_horizon");
          C.internal_mpc.S.str.equality = C.cas.horizon.constraints.equality.str;
-         C.internal_mpc.S.str.inequality = C.cas.horizon.constraints.inequality.str;
+         if C.flag_has_inequality
+            C.internal_mpc.S.str.inequality = C.cas.horizon.constraints.inequality.str;
+         end
          C.internal_mpc.ipopt_inequalities.expr = C.internal_mpc.S.vec;
 
          [Arg_constraints,in_fields] = C.create_Arg_symbolic_constraints;
@@ -2360,7 +2356,9 @@ problems, so maybe I will do this for the reference too at some point.
          C.internal_mpc.solution.decision  = C.cas.problem.decision.retrieve(full(C.internal_mpc.solution_ipopt.x));
          S_num = C.internal_mpc.S.retrieve(full(C.internal_mpc.solution_ipopt.lam_g));
          C.internal_mpc.solution.dual_eq = structor.subvec(S_num,S_num.str.equality);
-         C.internal_mpc.solution.dual_in = structor.subvec(S_num,S_num.str.inequality);
+         if C.flag_has_inequality
+            C.internal_mpc.solution.dual_in = structor.subvec(S_num,S_num.str.inequality);
+         end
 
          % when stacked:
          % C.internal_mpc.solution.dual_eq   = full(C.internal_mpc.solution_ipopt.lam_g(1:C.display.problem.n_equality));
@@ -2862,12 +2860,13 @@ Relevant options:
          end
          optimizations = struct;
          optimizations.index   = nan; % this is the index in the cell array it is contained in. Is added below.
-         optimizations.ID = append("opt",num2str(randi(10^6)));
+         optimizations.ID = C.generate_id;
          optimizations.solver         = solver; % "ipopt"
          optimizations.return_status  = return_status;%C.internal_mpc.solver.stats.return_status;
          optimizations.success_flag   = success_flag;%C.internal_mpc.solver.stats.success;
          optimizations.n_iterations   = n_iterations;%C.internal_mpc.solver.stats.iter_count;
          optimizations.solve_time     = C.internal_mpc.solve_time;
+         optimizations.integrator     = C.integrator;
          optimizations.quadratic_cost = C.quadratic_cost;
          optimizations.parameters     = C.parameters;
          optimizations.Dt             = C.horizon.Dt;
@@ -3290,6 +3289,10 @@ Relevant options:
          end
       end
       
+      function id = generate_id
+         characters = ['A':'Z', 'a':'z', '0':'9'];
+         id = string(characters(randi(numel(characters), [1, 6])));
+      end
    end
 
 
@@ -3461,6 +3464,7 @@ Relevant options:
             options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             options.mark_samples (1,1) logical = true;
             options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
+            options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
          end
 
          % create figure object to plot in
@@ -3507,7 +3511,7 @@ Relevant options:
             C
 
             % unique options:
-            options.optimization_number (1,1) double {mustBeInteger,mustBePositive} = length(C.archive.optimizations);
+            options.optimization_number (1,:) double {mustBeInteger,mustBePositive} = length(C.archive.optimizations);
 
             % common options:
             options.tiledlayout_varargin (1,:) cell
@@ -3518,20 +3522,60 @@ Relevant options:
             options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             options.mark_samples (1,1) logical = true;
             options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
+            options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
          end
 
-         ID_text = string(['ID: ',char(C.ID),' - ',char(C.archive.optimizations{options.optimization_number}.ID),' - solver: ',char(C.archive.optimizations{options.optimization_number}.solver)]);
-         other_text = ['Dt: ',num2str(C.archive.optimizations{options.optimization_number}.Dt),'  |   Integrator: ',char(C.integrator.integrator)];
-         return_status = strrep(C.archive.optimizations{options.optimization_number}.return_status,'_','\_');
-         title_text = [ID_text ; other_text; append("return\_status: '",return_status,"'")];
+         % ID_text = string(['ID: ',char(C.ID),' - ',char(C.archive.optimizations{options.optimization_number}.ID),' - solver: ',char(C.archive.optimizations{options.optimization_number}.solver)]);
+         % other_text = ['Dt: ',num2str(C.archive.optimizations{options.optimization_number}.Dt),'  |   Integrator: ',char(C.integrator.integrator)];
+         % return_status = strrep(C.archive.optimizations{options.optimization_number}.return_status,'_','\_');
+         % title_text = [ID_text ; other_text; append("return\_status: '",return_status,"'")];
+         %
+         % figure_text = [char(C.Name), ' : optimization ',num2str(options.optimization_number)];
+         % 
+         % % create figure object to plot in
+         % figure(Name=figure_text)
+         % 
+         % data = C.archive.optimizations{options.optimization_number}.decision.str;
+         % data.time = C.archive.optimizations{options.optimization_number}.time;
+         % 
+         % % Number:
+         % options.display_number = options.optimization_number;
+         % 
+         % [tiles,Layout] = display_trajectories(C,...
+         %    "optimization",...
+         %    data,...
+         %    title_text,...
+         %    options);
+         
 
-         figure_text = [char(C.Name), ' : optimization ',num2str(options.optimization_number)];
 
          % create figure object to plot in
+         figure_text = [char(C.Name), ' : optimization'];
          figure(Name=figure_text)
 
-         data = C.archive.optimizations{options.optimization_number}.decision.str;
-         data.time = C.archive.optimizations{options.optimization_number}.time;
+         % Prepare title text:
+         ID_text = append("ID:",C.ID," - opt-ID(index): ");
+         solver_text = "Solver (n.iter/sol.time): ";
+         integr_text = "Integrator (order/incr): ";
+         return_text = "Return Status: ";
+
+         % Prepare data
+         data = dictionary;
+
+         for i = options.optimization_number
+            ID_text = append(ID_text," / ",C.archive.optimizations{i}.ID,"(",string(i),")");
+            solver_text = append(solver_text," / ",C.archive.optimizations{i}.solver,"(",string(C.archive.optimizations{i}.n_iterations),"/",sec2str(C.archive.optimizations{i}.solve_time.total),")");
+            integr_text = append(integr_text," / ",C.archive.optimizations{i}.integrator.integrator,"(",string(C.archive.optimizations{i}.integrator.order),"/",string(C.archive.optimizations{i}.integrator.n_increments),")"); 
+            return_status = strrep(C.archive.optimizations{i}.return_status,'_','\_');
+            return_text = append(return_text," / ",return_status);
+
+            % data(i) = C.archive.optimizations{i}.sim;
+            data(i) = C.archive.optimizations{i}.decision.str;
+            data(i).time = C.archive.optimizations{i}.time;
+         end
+
+         title_text = [ID_text ; solver_text; integr_text; return_text];
+
 
          % Number:
          options.display_number = options.optimization_number;
@@ -3541,7 +3585,8 @@ Relevant options:
             data,...
             title_text,...
             options);
-         
+
+
       end
 
    end
@@ -3567,6 +3612,7 @@ Relevant options:
             % options.input (1,:) string
             % options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             % options.mark_samples (1,1) logical = true;
+            % options.transparency (1,1) 
          end
 
 
@@ -3579,7 +3625,6 @@ Relevant options:
          Layout = tiledlayout(tiled_varargin{:});
          title(Layout,title_text,'FontSize',11,'FontWeight','bold')
 
-         tiles = struct;
 
          var_typ = [];
          for type = C.var_types_notpar
@@ -3630,40 +3675,54 @@ Relevant options:
                   if i == 1 || options.multiplot == "separate"% on first pass, create new axes for every plot:
                      tiles(i).(type).(name) = nexttile(Layout);
                      tile = tiles(i).(type).(name);
+                     hold(tile,"on");
+                     grid(tile,"on");
+                     ylabel(tile,C.plotting.display_names.(type).(name),Interpreter="latex");
+                     
+                     if L > 1
+                        legend(tile)
+                     end
+
+                     if type == "state"
+                        tile.Color = [0.99, 1, 0.96];
+                     elseif type == "algeb"
+                        tile.Color = [1, 1, 0.96];
+                     elseif type == "input"
+                        tile.Color = [1, 0.98, 0.99];
+                     end
+
                   elseif options.multiplot == "ontop" % for the remaining passes, reuse old axes:
                      tile = tiles(1).(type).(name);
                   else
                      error('DEVELOPER ERROR: not "ontop" nor "separate"... ')
                   end
                   
-                  time = time_scaler(data(options.display_number(i)).time);
+                  % Prepare data:
                   if type == "input" && display_type == "simulation"
                      type_2 = "input_effective";
                   else
                      type_2 = type;
                   end
                   variable = data(options.display_number(i)).(type_2)(C.names.ind.(type).(name),:);
+                  time = time_scaler(data(options.display_number(i)).time);
 
                   % generate nice color
-                  color = interp1([0 (L+1)/2 L+1],[0 0 0; C.plotting.color.(type).(name); 1 1 1],i);
+                  if L == 1 || options.multiplot == "separate"
+                     color = C.plotting.color.(type).(name);
+                  elseif optoins.multiplot == "ontop"
+                     color = interp1([0 (L+1)/2 L+1],[0 0 0; C.plotting.color.(type).(name); 1 1 1],i);
+                  end
 
                   plot(tile,...
-                     time,...
-                     variable,...
-                     Color=color,...
-                     LineStyle=C.plotting.linestyle.(type).(name),...
-                     LineWidth=C.plotting.linewidth.(type).(name),...
-                     DisplayName=num2str(options.display_number(i)));
-                  grid on
-                  ylabel(C.plotting.display_names.(type).(name),Interpreter="latex")
+                       time,...
+                       variable,...
+                       Color=[color options.transparency],...
+                       LineStyle=C.plotting.linestyle.(type).(name),...
+                       LineWidth=C.plotting.linewidth.(type).(name),...
+                       DisplayName=num2str(options.display_number(i)));
 
-                  if type == "state"
-                     tile.Color = [0.99, 1, 0.96];
-                  elseif type == "algeb"
-                     tile.Color = [1, 1, 0.96];
-                  elseif type == "input"
-                     tile.Color = [1, 0.98, 0.99];
-                  end
+
+
 
                   % Mark state sampling times
                   if display_type == "simulation" && ~isinf(C.archive.simulations{options.display_number(i)}.sampling_time) && options.mark_samples && ismember(type,["state","algeb"])
@@ -3675,13 +3734,9 @@ Relevant options:
                      samp_time = [C.archive.simulations{options.display_number(i)}.stage(1:inc:end).time];
                      samp_values = [C.archive.simulations{options.display_number(i)}.stage(1:inc:end).(type)];
                      samp_values = samp_values(C.names.ind.(type).(name),:);
-                     hold on
                      plot(tile,samp_time,samp_values,LineStyle='none',Marker='square',MarkerSize=4,MarkerEdgeColor=color,HandleVisibility='off')
                   end
 
-                  if L > 1 && i == 1 && options.multiplot == "ontop"
-                     legend
-                  end
                end
             end
          end

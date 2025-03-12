@@ -1,4 +1,4 @@
-%% Cart-Pendulum Tutorial 1 - Basics
+%% Cart-Pendulum Tutorial 1 - Defining dynamics and simulating
 
 
 %{
@@ -26,7 +26,7 @@ C = TRYMPC('Tester Instance',...
 
 
 %% Define dynamics:
-u_pendulum = 0; % no input on the 
+u_pendulum = 0; % no input on the pendulum
 
 % cart acceleration
 ddx = @(s,a,i,p) -(p.L*i.ux + u_pendulum*cos(s.th) + p.L^2*s.dth^2*p.mth*sin(s.th) - p.L*p.g*p.mth*cos(s.th)*sin(s.th))/(p.L*(- p.mth*cos(s.th)^2 + p.mx + p.mth));
