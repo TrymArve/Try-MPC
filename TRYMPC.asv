@@ -1806,9 +1806,12 @@ classdef TRYMPC < handle
          end
 
 
+         % Prepare random ID:
+         characters = ['A':'Z', 'a':'z', '0':'9'];
+
          %%%%%%% Before simulating, prepare the sim_results struct
          C.archive.simulations{end+1} = C.simulation;
-         C.archive.simulations{end}.ID = append("sim",num2str(randi(10^6)));
+         C.archive.simulations{end}.ID = string(characters(randi(numel(characters), [1, 6])));
          C.archive.simulations{end}.stage = struct([]);
          C.archive.simulations{end}.sim.time = C.simulation.start_time;
          C.archive.simulations{end}.sim.state = C.simulation.initial_state;
@@ -1890,19 +1893,18 @@ classdef TRYMPC < handle
             end
 
 
+            if  C.internal_sim.simulation_increment
+               % Simulate the current increment
+               [C.internal_sim.t_sim,C.internal_sim.x_sim] = C.internal_sim.simulator_handle( ...
+                  @(t,x) full(C.cas.dynamics.F.call(C.internal_sim.arg(x,C.internal_sim.ode_inputs(t,x))).out), ...  % system dynamics
+                  C.internal_sim.time+[0,C.internal_sim.simulation_increment],...  % time interval of integration
+                  C.internal_sim.state,...  % initial state (current state of the greater simulation)
+                  C.simulation.ode_options); % ode options
 
-            % Simulate the current increment
-            [C.internal_sim.t_sim,C.internal_sim.x_sim] = C.internal_sim.simulator_handle( ...
-                       @(t,x) full(C.cas.dynamics.F.call(C.internal_sim.arg(x,C.internal_sim.ode_inputs(t,x))).out), ...  % system dynamics
-                       C.internal_sim.time+[0,C.internal_sim.simulation_increment],...  % time interval of integration
-                       C.internal_sim.state,...  % initial state (current state of the greater simulation)
-                       C.simulation.ode_options); % ode options
 
-
-
-            % log data:
-            C.log_simulation
-
+               % log data:
+               C.log_simulation
+            end
 
 
             C.internal_sim.time = C.internal_sim.t_sim(end);
@@ -3060,6 +3062,12 @@ Relevant options:
 
       function set_control_delay(C,contorl_delay)
          C.internal_sim.control_delay = contorl_delay*C.simulation.control_delay_scaler;
+         if C.internal_sim.control_delay > C.simulation.sampling_time
+            % disp(' ')
+            warning(['The control delay (',sec2str(C.internal_sim.control_delay),') is greater than the sampling time (',sec2str(C.simulation.sampling_time),'). In a practical setting, this may cause failure. Here; we set the control delay equal to the sampling time.'])
+            C.internal_sim.control_delay = min([C.internal_sim.control_delay, C.simulation.sampling_time]);
+            C.internal_sim.linelength = 0;
+         end
       end
 
 
@@ -3452,23 +3460,45 @@ Relevant options:
             options.input (1,:) string
             options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             options.mark_samples (1,1) logical = true;
+            options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
          end
 
-         ID_text = string(['ID: ',char(C.ID),' - ',char(C.archive.simulations{options.simulation_number}.ID)]);
-         contr_text = ['Controller: "',char(strrep(C.simulation.controller,'_','\_')),'"'];
-         other_text = ['Sampling Time: ',num2str(C.archive.simulations{options.simulation_number}.sampling_time),'  -  cd. scaler: ',num2str(C.archive.simulations{options.simulation_number}.control_delay_scaler)];
-         title_text = [ID_text ; contr_text; other_text];
+         % create figure object to plot in
+         figure_text = [char(C.Name), ' : simulation '];
+         figure(Name=figure_text)
 
-         figure_text = [char(C.Name), ' : simulation ',num2str(options.simulation_number)];
+         % Prepare title text:
+         ID_text = append("ID:",C.ID," - sim-ID(index): ");
+         contr_text = "Controller: ";
+         sampl_text = "Sampling Time: ";
+         cd_text = "control delay scaler: ";
+
+         % Prepare data
+         data = dictionary;
+
+         for i = options.simulation_number
+            ID_text = append(ID_text,"/",C.archive.simulations{i}.ID,"(",string(i),")");
+            contr_text = append(contr_text,"/",strrep(C.simulation.controller,'_','\_'));
+            sampl_text = append(sampl_text,"/",num2str(C.archive.simulations{i}.sampling_time)); 
+            cd_text = append(cd_text,"/",num2str(C.archive.simulations{i}.control_delay_scaler));
+
+            data(i) = C.archive.simulations{i}.sim;
+         end
+
+         title_text = [ID_text ; contr_text; sampl_text];
+
+
+         % Number:
+         options.display_number = options.simulation_number;
 
          [tiles,Layout] = display_trajectories(C,...
             "simulation",...
-            C.archive.simulations{options.simulation_number}.sim,...
+            data,...
             title_text,...
-            figure_text,...
             options);
-      
-      
+
+
+
       end
 
 
@@ -3487,6 +3517,7 @@ Relevant options:
             options.input (1,:) string
             options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             options.mark_samples (1,1) logical = true;
+            options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
          end
 
          ID_text = string(['ID: ',char(C.ID),' - ',char(C.archive.optimizations{options.optimization_number}.ID),' - solver: ',char(C.archive.optimizations{options.optimization_number}.solver)]);
@@ -3496,15 +3527,19 @@ Relevant options:
 
          figure_text = [char(C.Name), ' : optimization ',num2str(options.optimization_number)];
 
+         % create figure object to plot in
+         figure(Name=figure_text)
 
          data = C.archive.optimizations{options.optimization_number}.decision.str;
          data.time = C.archive.optimizations{options.optimization_number}.time;
+
+         % Number:
+         options.display_number = options.optimization_number;
 
          [tiles,Layout] = display_trajectories(C,...
             "optimization",...
             data,...
             title_text,...
-            figure_text,...
             options);
          
       end
@@ -3514,16 +3549,16 @@ Relevant options:
 
    %%% Internal display methods
    methods(Access = private)
-      function [tiles,Layout] = display_trajectories(C,display_type,data,title_text,figure_text,options)
+      function [tiles,Layout] = display_trajectories(C,display_type,data,title_text,options)
          arguments
             C
             % unique:
             display_type (1,1) string {mustBeMember(display_type,["simulation","optimization"])}
-            data (1,1) struct
+            data (1,1) dictionary
             title_text string
-            figure_text (1,1) string
 
             options
+
             % Common optoins:
             % options.tiledlayout_varargin (1,:) cell;
             % options.gridstyle (1,1) string {mustBeMember(options.gridstyle,["flow","vertical","horizontal"])} = "flow";
@@ -3534,8 +3569,6 @@ Relevant options:
             % options.mark_samples (1,1) logical = true;
          end
 
-         % create figure object to plot in
-         figure(Name=figure_text)
 
          % Tiled layout to structure the figure
          if isfield(options,'tiledlayout_varargin')
@@ -3544,10 +3577,8 @@ Relevant options:
             tiled_varargin = {options.gridstyle,"TileSpacing","compact","Padding","compact"};
          end
          Layout = tiledlayout(tiled_varargin{:});
-         title(Layout,title_text)
+         title(Layout,title_text,'FontSize',11,'FontWeight','bold')
 
-         % hold all axes handles in a struct, and pass as output so that
-         % one can edit them outside this function.
          tiles = struct;
 
          var_typ = [];
@@ -3581,55 +3612,80 @@ Relevant options:
          end
 
 
+         % hold all axes handles in a struct, and pass as output so that
+         % one can edit them outside this function.
+         tiles = struct([]);
+
          % Plot:
-         for type = var_typ
-            if ~isfield(options,type) || (isscalar(options.(type)) && options.(type) == "all")
-               names = C.names.code.(type)';
-            else
-               names = options.(type); %#ok<*PROPLC>
-            end
-
-            for name = names
-               tiles.(type).(name) = nexttile(Layout);
-               time = time_scaler(data.time);
-               if type == "input" && display_type == "simulation"
-                  type_2 = "input_effective";
+         L = length(options.display_number);
+         for i = 1:L
+            for type = var_typ
+               if ~isfield(options,type) || (isscalar(options.(type)) && options.(type) == "all")
+                  names = C.names.code.(type)';
                else
-                  type_2 = type;
-               end
-               variable = data.(type_2)(C.names.ind.(type).(name),:);
-               plot(tiles.(type).(name),...
-                  time,...
-                  variable,...
-                  Color=C.plotting.color.(type).(name),...
-                  LineStyle=C.plotting.linestyle.(type).(name),...
-                  LineWidth=C.plotting.linewidth.(type).(name));
-               grid on
-               ylabel(C.plotting.display_names.(type).(name),Interpreter="latex")
-
-               if type == "state"
-                  tiles.(type).(name).Color = [0.99, 1, 0.96];
-               elseif type == "algeb"
-                  tiles.(type).(name).Color = [1, 1, 0.96];
-               elseif type == "input"
-                  tiles.(type).(name).Color = [1, 0.98, 0.99];
+                  names = options.(type); %#ok<*PROPLC>
                end
 
-               % Mark state sampling times
-               if display_type == "simulation" && ~isinf(data.sampling_time) && options.mark_samples && ismember(type,["state","algeb"])
-                  if C.simulation.control_delay_scaler
-                     inc = 2;
+               for name = names
+                  if i == 1 || options.multiplot == "separate"% on first pass, create new axes for every plot:
+                     tiles(i).(type).(name) = nexttile(Layout);
+                     tile = tiles(i).(type).(name);
+                  elseif options.multiplot == "ontop" % for the remaining passes, reuse old axes:
+                     tile = tiles(1).(type).(name);
                   else
-                     inc = 1;
+                     error('DEVELOPER ERROR: not "ontop" nor "separate"... ')
                   end
-                  samp_time = [data.stage(1:inc:end).time];
-                  samp_values = [data.stage(1:inc:end).(type)];
-                  samp_values = samp_values(C.names.ind.(type).(name),:);
-                  hold on
-                  plot(samp_time,samp_values,LineStyle='none',Marker='square',MarkerSize=4,MarkerEdgeColor=C.plotting.color.(type).(name))
+                  
+                  time = time_scaler(data(options.display_number(i)).time);
+                  if type == "input" && display_type == "simulation"
+                     type_2 = "input_effective";
+                  else
+                     type_2 = type;
+                  end
+                  variable = data(options.display_number(i)).(type_2)(C.names.ind.(type).(name),:);
+
+                  % generate nice color
+                  color = interp1([0 (L+1)/2 L+1],[0 0 0; C.plotting.color.(type).(name); 1 1 1],i);
+
+                  plot(tile,...
+                     time,...
+                     variable,...
+                     Color=color,...
+                     LineStyle=C.plotting.linestyle.(type).(name),...
+                     LineWidth=C.plotting.linewidth.(type).(name),...
+                     DisplayName=num2str(options.display_number(i)));
+                  grid on
+                  ylabel(C.plotting.display_names.(type).(name),Interpreter="latex")
+
+                  if type == "state"
+                     tile.Color = [0.99, 1, 0.96];
+                  elseif type == "algeb"
+                     tile.Color = [1, 1, 0.96];
+                  elseif type == "input"
+                     tile.Color = [1, 0.98, 0.99];
+                  end
+
+                  % Mark state sampling times
+                  if display_type == "simulation" && ~isinf(C.archive.simulations{options.display_number(i)}.sampling_time) && options.mark_samples && ismember(type,["state","algeb"])
+                     if C.simulation.control_delay_scaler
+                        inc = 2;
+                     else
+                        inc = 1;
+                     end
+                     samp_time = [C.archive.simulations{options.display_number(i)}.stage(1:inc:end).time];
+                     samp_values = [C.archive.simulations{options.display_number(i)}.stage(1:inc:end).(type)];
+                     samp_values = samp_values(C.names.ind.(type).(name),:);
+                     hold on
+                     plot(tile,samp_time,samp_values,LineStyle='none',Marker='square',MarkerSize=4,MarkerEdgeColor=color,HandleVisibility='off')
+                  end
+
+                  if L > 1 && i == 1 && options.multiplot == "ontop"
+                     legend
+                  end
                end
             end
          end
+
          xlabel(['Time [',char(options.time_order),']'])
       end
 
