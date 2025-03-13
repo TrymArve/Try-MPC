@@ -553,7 +553,7 @@ classdef TRYMPC < handle
       function def_integrator(C,method,options)
          arguments
             C
-            method (1,1) string {mustBeMember(method,["Explicit Euler","Implicit Euler","ERK4","IRK4","collocation","external","explicit butcher tableau","implicit butcher tableau"])}
+            method (1,1) string {mustBeMember(method,["Explicit Euler","Implicit Euler","ERK4","ERK4 (simultaneous)","Implicit Midpoint","Crank-Nicolson (Implicit)","IRK4 (L-stable)","Gauss-Legendre (4. order)","Gauss-Legendre (6. order)","collocation","external","explicit butcher tableau","implicit butcher tableau"])}
 
             % General settings:
             options.n_increments (1,1) double {mustBePositive,mustBeInteger} = 1;
@@ -609,10 +609,10 @@ classdef TRYMPC < handle
 
                % Butcher Tableau:
                C.integrator.BT_b = 1;
-               C.integrator.BT_A = 0;
+               C.integrator.BT_A = 1;
 
                C.IRK_builder
-            
+
             case "ERK4"
                C.integrator.order = 4;
                C.integrator.shooting_method = "multiple shooting";
@@ -626,8 +626,7 @@ classdef TRYMPC < handle
 
                C.ERK_builder
 
-            case "IRK4"
-               % error('OPS, IRK4 is not yet implemented. sorry.... ')
+            case "ERK4 (simultaneous)"
                C.integrator.order = 4;
                C.integrator.shooting_method = "simultaneous shooting";
                C.integrator.has_aux = true;
@@ -641,6 +640,80 @@ classdef TRYMPC < handle
 
                C.IRK_builder
 
+            case "Implicit Midpoint"
+               C.integrator.has_aux = true;
+
+               C.integrator.order = 2;
+               C.integrator.shooting_method = "simultaneous shooting";
+
+               % Butcher Tableau:
+               C.integrator.BT_b = 1;
+               C.integrator.BT_A = 1/2;
+
+               C.IRK_builder
+
+            case "Crank-Nicolson (Implicit)"
+               C.integrator.has_aux = true;
+
+               C.integrator.order = 2;
+               C.integrator.shooting_method = "simultaneous shooting";
+
+               % Butcher Tableau:
+               C.integrator.BT_b = [1 1]/2;
+               C.integrator.BT_A = [0 0; 1 1]/2;
+
+               C.IRK_builder
+
+            case "Gauss-Legendre (4. order)"
+               C.integrator.has_aux = true;
+
+               C.integrator.order = 4;
+               C.integrator.shooting_method = "simultaneous shooting";
+
+               % Butcher Tableau:
+               C.integrator.BT_b = [1 1]/2;
+               C.integrator.BT_A = [   1/4         1/4-sqrt(3)/6 ;
+                  1/4+sqrt(3)/6      1/4       ];
+
+               C.IRK_builder
+
+            case "Gauss-Legendre (6. order)"
+               C.integrator.has_aux = true;
+
+               C.integrator.order = 6;
+               C.integrator.shooting_method = "simultaneous shooting";
+
+               % Butcher Tableau:
+               C.integrator.BT_b = [5/18 4/9 5/18];
+               C.integrator.BT_A = [5/36              2/9-sqrt(15)/15   5/36-sqrt(15)/30;
+                                    5/36+sqrt(15)/24      2/9           5/36-sqrt(15)/24;
+                                    5/36+sqrt(15)/30  2/9+sqrt(15)/15   5/36];
+
+               C.IRK_builder
+
+            case "IRK4 (L-stable)"
+               C.integrator.order = 3;
+               C.integrator.shooting_method = "simultaneous shooting";
+               C.integrator.has_aux = true;
+
+               % Butcher Tableau:
+               C.integrator.BT_b = [3 -3 1 1]/2;
+               C.integrator.BT_A = [ 1   0   0   0  ;
+                                    1/3  1   0   0  ;
+                                    -1   1   1   0  ;
+                                     3  -3   1   1  ] /2;
+               % C.integrator.BT_A(1,1) =  1/2;
+               % C.integrator.BT_A(2,1) =  1/6;
+               % C.integrator.BT_A(3,1) = -1/2;
+               % C.integrator.BT_A(4,1) =  3/2;
+               % C.integrator.BT_A(2,2) =  1/2;
+               % C.integrator.BT_A(3,2) =  1/2;
+               % C.integrator.BT_A(4,2) = -3/2;
+               % C.integrator.BT_A(3,3) =  1/2;
+               % C.integrator.BT_A(4,3) =  1/2;
+               % C.integrator.BT_A(4,4) =  1/2;
+
+               C.IRK_builder
 
             case "explicit butcher tableau"
                if ~isfield(options,'bucher_tableau_b')
@@ -816,6 +889,8 @@ classdef TRYMPC < handle
             options.equality   (1,1) struct % general stage-wise equality constraints (g() = 0)
             options.inequality (1,1) struct % a general stage-wise inequlity constraints (h() >= 0)
          end
+
+         ' In tutorial 2 - I try adding terminal equality constraints, but they dont seem to be fully satisfied, and the C.cas.horizon.constraints.equality.str does not have a "stage_50", which is where these constraints should be found....
          % Prepare restoration
          fields = fieldnames(options);
          values = struct2cell(options);
@@ -2150,9 +2225,9 @@ classdef TRYMPC < handle
 
 
          % make input trajectory the length of the others, to simplify plot
-         if C.flag_has_input
-            C.internal_mpc.solution.decision.str.input(:,end+1) = nan(C.dim.input,1);
-         end
+         % if C.flag_has_input
+         %    C.internal_mpc.solution.decision.str.input(:,end+1) = nan(C.dim.input,1);
+         % end
 
          C.save_archive_optimization("optimization",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count)
          
@@ -2749,12 +2824,20 @@ Relevant options:
 
       % Convergence measure:
       function [stationarity,equality,inequality] = convergence(C)
+
+         % Generate Numeric Arguments:
+         C.create_Arg
          Arg_Lagrangian = C.internal_mpc.Arg_Lagrangian;
          Arg_Lagrangian.decision = C.internal_mpc.decision;
-
          Arg_constraints = C.internal_mpc.Arg_constraints;
          Arg_constraints.decision = C.internal_mpc.decision;
+         
+         [stationarity,equality,inequality] = C.internal_convergence(Arg_constraints,Arg_Lagrangian);
 
+      end
+
+      function [stationarity,equality,inequality] = internal_convergence(C,Arg_constraints,Arg_Lagrangian)
+         % Evaluate:
          stationarity  = full(max(abs(C.cas.problem.Lagrangian.J.F.call(Arg_Lagrangian).out))); % maximum sationarity violation
          equality      = full(max(abs(C.cas.problem.equality.F.call(Arg_constraints).out))); % maximum equality violation
          if C.flag_has_inequality
@@ -2763,8 +2846,6 @@ Relevant options:
             inequality    = 0;
          end
       end
-
-
 
       % Prepare Args for defining casadi constraint Functions:
       function [Arg_objective,in_fields] = create_Arg_symbolic_objective(C)
@@ -2858,36 +2939,119 @@ Relevant options:
             success_flag 
             n_iterations 
          end
-         optimizations = struct;
-         optimizations.index   = nan; % this is the index in the cell array it is contained in. Is added below.
-         optimizations.ID = C.generate_id;
-         optimizations.solver         = solver; % "ipopt"
-         optimizations.return_status  = return_status;%C.internal_mpc.solver.stats.return_status;
-         optimizations.success_flag   = success_flag;%C.internal_mpc.solver.stats.success;
-         optimizations.n_iterations   = n_iterations;%C.internal_mpc.solver.stats.iter_count;
-         optimizations.solve_time     = C.internal_mpc.solve_time;
-         optimizations.integrator     = C.integrator;
-         optimizations.quadratic_cost = C.quadratic_cost;
-         optimizations.parameters     = C.parameters;
-         optimizations.Dt             = C.horizon.Dt;
-         optimizations.time           = (0:C.horizon.N).*C.horizon.Dt;
-         optimizations.ref            = C.internal_mpc.ref;
-         optimizations.dual_eq        = solution.dual_eq;
-         if C.flag_has_inequality
-            optimizations.dual_in     = solution.dual_in;
+         optimization = struct;
+         optimization.index   = nan; % this is the index in the cell array it is contained in. Is added below.
+         optimization.ID = C.generate_id;
+         optimization.solver         = solver; % "ipopt"
+         optimization.return_status  = return_status;%C.internal_mpc.solver.stats.return_status;
+         optimization.success_flag   = success_flag;%C.internal_mpc.solver.stats.success;
+         optimization.n_iterations   = n_iterations;%C.internal_mpc.solver.stats.iter_count;
+         optimization.solve_time     = C.internal_mpc.solve_time;
+         optimization.integrator     = C.integrator;
+         optimization.quadratic_cost = C.quadratic_cost;
+         optimization.parameters     = C.parameters;
+         optimization.Dt             = C.horizon.Dt;
+         optimization.N              = C.horizon.N;
+         optimization.T              = C.horizon.T;
+         optimization.time           = (0:C.horizon.N).*C.horizon.Dt;
+         optimization.ref            = C.internal_mpc.ref;
+         optimization.initial_state  = C.internal_mpc.initial_state;
+         if C.flag_has_bounds
+            optimization.bounds      = C.bounds;
          end
-         optimizations.decision       = solution.decision;
-         optimizations.solver_specific = struct;
+         if C.flag_has_bounds
+            optimization.terminal_bounds      = C.terminal_bounds;
+         end
+         optimization.dual_eq        = solution.dual_eq;
+         if C.flag_has_inequality
+            optimization.dual_in     = solution.dual_in;
+         end
+         optimization.decision       = solution.decision;
+         optimization.convergence = C.convergence_measure(optimization);
+         optimization.solver_specific = struct;
 
          if type == "optimization"
-            C.archive.optimizations{end+1} = optimizations;
+            C.archive.optimizations{end+1} = optimization;
             C.archive.optimizations{end}.index = length(C.archive.optimizations);
          else
-            C.archive.simulations{end}.optimizations{end+1} = optimizations;
+            C.archive.simulations{end}.optimizations{end+1} = optimization;
             C.archive.simulations{end}.optimizations{end}.index = length(C.archive.simulations{end}.optimizations);
          end
       end
    end
+
+
+
+
+
+   % Evaluate problem functions
+   methods
+      function arg = Arg_objective(C,optimization)
+         arguments
+            C 
+            optimization (1,1) struct
+         end
+         arg = optimization.quadratic_cost;
+         arg.param = optimization.parameters.vec;
+         for type = C.var_types_notpar
+            arg.([char(type),'_ref_trajectory']) = optimization.ref.(type);
+         end
+      end
+      function arg = Arg_constraints(C,optimization)
+         arguments
+            C 
+            optimization (1,1) struct
+         end
+         % Prepare arguemnts for constraint evaluation:
+         arg.param = optimization.parameters.vec;
+         arg.Dt = optimization.Dt;
+         arg.initial_state = optimization.initial_state;
+         if C.flag_has_bounds
+            for bound_type = string(fieldnames(C.cas.bounds))'
+               for name = string(fieldnames(C.cas.bounds.(bound_type)))'
+                  arg.([char(bound_type),'_',char(name)]) = optimization.bounds.(bound_type).(name);
+               end
+            end
+         end
+         if C.flag_has_terminal_bounds
+            for bound_type = string(fieldnames(C.cas.terminal_bounds))'
+               for name = string(fieldnames(C.cas.terminal_bounds.(bound_type)))'
+                  arg.([char(bound_type),'_terminal_',char(name)]) = optimization.terminal_bounds.(bound_type).(name);
+               end
+            end
+         end
+      end
+      function [arg,arg_obj,arg_const] = Arg_Lagrangian(C,optimization)
+         arguments
+            C
+            optimization (1,1) struct
+         end
+         arg_obj   = C.Arg_objective(optimization);
+         arg_const = C.Arg_constraints(optimization);
+         arg = mergestructs(arg_obj,arg_const);
+      end
+
+      % Convergence measure:
+      function out = convergence_measure(C,optimization)
+         arguments
+            C 
+            optimization (1,1) struct
+         end
+
+         % Generate Numeric Arguments:
+         [Arg_Lagrangian,~,Arg_constraints] = C.Arg_Lagrangian(optimization);
+         Arg_constraints.decision = optimization.decision.vec;
+         Arg_Lagrangian.decision = optimization.decision.vec;
+
+         out = struct;
+         [out.stationarity,out.equality,out.inequality] = C.internal_convergence(Arg_constraints,Arg_Lagrangian);
+         % out.stationarity = stationarity;
+         % out.equality = equality;
+         % out.inequality = inequality;
+      end
+   end
+
+
 
 
 
@@ -3429,22 +3593,23 @@ Relevant options:
          Col.KKT = 'm';
          Col.Lagrangian = 'c';
 
+         figure('Name','Sparsity Pattern ')
+         Layout = tiledlayout('flow','TileSpacing','compact','Padding','compact');
+         title(Layout,'Sparsity');
 
          for expr_type = expression
 
             switch expr_type
                case {"equality", "inequality"}
-                  expr = C.cas.problem.(expr_type).J.expr;S
+                  expr = C.cas.problem.(expr_type).J.expr;
                case {"objective", "Lagrangian"}
                   expr = C.cas.problem.(expr_type).H.expr;
                case "KKT"
                   expr = C.cas.problem.(expr_type).matrix.expr;
             end
-            
-
-            figure('Name',['Sparsity Pattern: ',char(expr_type)])
+            tile = nexttile;
             spy(expr,Col.(expr_type))
-            title(['Sparsity Pattern: ',char(Tit.(expr_type)),' ',char(desc.(expr_type))])
+            title(tile,[char(Tit.(expr_type)),' ',char(desc.(expr_type))])
          end
       end
    
@@ -3704,12 +3869,15 @@ Relevant options:
                      type_2 = type;
                   end
                   variable = data(options.display_number(i)).(type_2)(C.names.ind.(type).(name),:);
+                  if type == "input"
+                     variable(:,end+1) = nan; % make inputs the same length as the time vector
+                  end
                   time = time_scaler(data(options.display_number(i)).time);
 
                   % generate nice color
                   if L == 1 || options.multiplot == "separate"
                      color = C.plotting.color.(type).(name);
-                  elseif optoins.multiplot == "ontop"
+                  elseif options.multiplot == "ontop"
                      color = interp1([0 (L+1)/2 L+1],[0 0 0; C.plotting.color.(type).(name); 1 1 1],i);
                   end
 
