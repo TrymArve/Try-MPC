@@ -433,7 +433,7 @@ C.def_stage_constraints("lower_bounds",["th","ux"],"upper_bounds",["th","ux"],in
 % Force the cart to be at zero, with the pendulum at rest in the upright
 % position: (note that the cart may be moving sideways)
 terminal_equality.cart_at_zero = s.x;
-terminal_equality.pendulum_at_zero = s.th; ' make use of @(s,a,i,p) instead (must update the TRYMPC instance to accomodate this...)
+terminal_equality.pendulum_at_zero = s.th; ' make use of @(s,a,i,p) instead (must upd)
 terminal_equality.pendulum_at_still = s.dth;
 % Define terminal constrainst, but also add bounds on the terminal speed of
 % the cart:

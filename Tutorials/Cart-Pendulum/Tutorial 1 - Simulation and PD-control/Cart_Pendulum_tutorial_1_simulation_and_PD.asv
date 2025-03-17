@@ -41,7 +41,7 @@ retrieving them.
 More importantly, by defining the dyanmics like this means that we can very
 easily store the dynamics as a pure matlab file, without any need for
 external tools, packages or any humbug. This is convenient for regenerating
-the TRYMPS class from a matlab file.
+the TRYMPS class from a matlab fi
 %}
 
 % cart acceleration
