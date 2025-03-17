@@ -23,8 +23,8 @@ classdef TRYMPC < handle
 
       % "SQP_settings" contains the settigns of the SQP algorithm / QP subproblems:
       SQP_settings (1,1) struct = struct("tolerance_lagrangian",5,...
-                                         "tolerance_equality",10^-7,...
-                                         "tolerance_inequality",10^-7,...
+                                         "tolerance_equality",10^-6,...
+                                         "tolerance_inequality",10^-6,...
                                          "QP_solver","quadprog_IP",...
                                          "quadprog_AS_options",optimoptions("quadprog","Algorithm","active-set","Display","none",MaxIterations=200,ConstraintTolerance = 10^-8),...
                                          "quadprog_IP_options",optimoptions("quadprog","Algorithm","interior-point-convex","Display","none",MaxIterations=200,ConstraintTolerance = 10^-8),...
@@ -32,8 +32,8 @@ classdef TRYMPC < handle
                                          "max_N_iterations",100,...
                                          "merit_function",@(decision,lambda_next,mu_next) [],...
                                          "linesearch_method","backtracking",...
-                                         "backtracking_rate",0.6,...
-                                         "backtracking_min_step_size",10^-9);
+                                         "backtracking_rate",0.5,...
+                                         "backtracking_min_step_size",10^-8);
 
       archive (1,1) struct = struct('optimizations',[],'simulations',[]) % contains simulation results (for all simulations that are performed)
    end
@@ -87,6 +87,9 @@ classdef TRYMPC < handle
 
       %%% Restoration:
       restore_cell (:,1) cell = {struct}; % for holding inputs to all "def_..." functions, so they can be regenerated. (does not work if external expressions are used. F.ex. manually providing the stage cost, or terminal bounds, etc...)
+
+      % Horizon definition
+      horizon_decider (1,1) string {mustBeMember(horizon_decider,["Dt","T"])} = "Dt";
    end
    properties(Constant,Hidden)
       cost_to_var = struct('Q',"state", ...
@@ -143,6 +146,7 @@ classdef TRYMPC < handle
       bounds (1,1) struct = struct; % holds the upper and lower bounds of each individual variable. Ex: "C.bounds.upper.th = 2"
       terminal_bounds (1,1) struct = struct; % holds the upper and lower bounds of each terminal variable. Ex: "C.terminal_bounds.upper.ux = 0.2"
       ref (1,1) struct % shold contain a reference trajectory for states, algebs, and inputs
+      initial_state (1,1) structor = structor;
 
       plotting (1,1) struct % contains informations about desired grafic settings for the various parameters
    end
@@ -175,6 +179,10 @@ classdef TRYMPC < handle
          % Generate variables
          C.def_instance(names)
 
+         % Set default initial state
+         for name = C.names.code.state'
+            C.initial_state.str.(name) = 0;
+         end
          
          create_time = toc(create_time);
          disp(['done.  ',sec2str(create_time)]);
@@ -890,7 +898,7 @@ classdef TRYMPC < handle
             options.inequality (1,1) struct % a general stage-wise inequlity constraints (h() >= 0)
          end
 
-         ' In tutorial 2 - I try adding terminal equality constraints, but they dont seem to be fully satisfied, and the C.cas.horizon.constraints.equality.str does not have a "stage_50", which is where these constraints should be found....
+         % ' In tutorial 2 - I try adding terminal equality constraints, but they dont seem to be fully satisfied, and the C.cas.horizon.constraints.equality.str does not have a "stage_50", which is where these constraints should be found....
          % Prepare restoration
          fields = fieldnames(options);
          values = struct2cell(options);
@@ -979,9 +987,10 @@ classdef TRYMPC < handle
          arguments
             C
             N  (1,1) double {mustBePositive,mustBeInteger}
-            options.Dt (1,1) double {mustBePositive}
+            % options.Dt (1,1) double {mustBePositive}
             options.primaldual (1,1) string {mustBeMember(options.primaldual,["stacked","sorted"])} = "stacked";
          end
+         
          % Prepare restoration
          fields = fieldnames(options);
          values = struct2cell(options);
@@ -995,10 +1004,10 @@ classdef TRYMPC < handle
          end
 
          C.horizon.N = N;
-         if isfield(options,'Dt')
-            C.set_Dt(options.Dt);
-         elseif isfield(C.horizon,'Dt')
-            C.set_Dt(C.horizon.Dt);
+         if ~isfield(C.horizon,'Dt') && ~isfield(C.horizon,'T')
+            C.set_Dt(1);
+         else
+            C.(['set_',char(C.horizon_decider)])(C.horizon.(C.horizon_decider));
          end
 
          %%%%%% Generate all decision variables on the horizon:
@@ -1711,7 +1720,7 @@ classdef TRYMPC < handle
             C
             
             duration (1,1) double {mustBePositive}
-            init_state (:,1) {mustBeA(init_state, {'double', 'struct'})}
+            init_state (:,1) {mustBeA(init_state, {'double', 'struct'})} = C.initial_state.vec
 
             % Simulator settings:
             options.simulator (1,1) string {mustBeMember(options.simulator,["ode45","ode23","ode113","ode78","ode89","ode15s","ode23s","ode23t","ode23tb","ode15i"])} = "ode45";
@@ -2166,16 +2175,18 @@ classdef TRYMPC < handle
             solver (1,1) string {mustBeMember(solver,["ipopt","sqp"])} = "ipopt"
 
             % Options
-            options.initial_state (:,1) double = zeros(C.dim.state,1);
+            options.initial_state (:,1) double = C.initial_state.vec;
             options.initial_guess_primal (:,1) double {mustBeReal} = zeros(C.display.problem.n_decision,1);
             options.initial_guess_dual_eq (:,1) double {mustBeReal} = zeros(C.display.problem.n_equality,1);
             options.initial_guess_dual_in (:,1) double {mustBeReal} = zeros(C.display.problem.n_inequality,1);
-            options.display_result (1,1) logical = true;
+            
+            options.max_iterations (1,1) {mustBeInteger,mustBePositive}
+            
             options.state_ref (:,:) double 
             options.algeb_ref (:,:) double 
             options.input_ref (:,:) double 
 
-
+            options.display_result (1,1) logical = true;
             
             % Solver specific
             options.ipopt_nlpsol_options (1,1) struct = struct('print_time',0);
@@ -2212,7 +2223,10 @@ classdef TRYMPC < handle
             % options.ipopt_nlpsol_options.ipopt.linear_solver              = 'mumps';
             % options.ipopt_nlpsol_options.ipopt.linear_system_scaling      = 'none';
 
+         end
 
+         if isfield(options,'max_iterations')
+            options.ipopt_nlpsol_options.ipopt.max_iter = options.max_iterations;
          end
          
          C.internal_mpc.nlpsol_options = options.ipopt_nlpsol_options;
@@ -2256,6 +2270,9 @@ classdef TRYMPC < handle
             options (1,1) struct % contains the optional fields form the general "solve()" function
          end
 
+         if isfield(options,'max_iterations')
+            C.set_SQP_settings("max_N_iterations",options.max_iterations)
+         end
 
          C.initialize_sqp
          solve_time = tic;
@@ -2270,10 +2287,10 @@ classdef TRYMPC < handle
             solution.dual_in = structor.subvec(C.cas.problem.primaldual,primaldual.str.mu);
          end
 
-         % make input trajectory the length of the others, to simplify plot
-         if C.flag_has_input
-            solution.decision.str.input(:,end+1) = nan(C.dim.input,1);
-         end
+         % % make input trajectory the length of the others, to simplify plot
+         % if C.flag_has_input
+         %    solution.decision.str.input(:,end+1) = nan(C.dim.input,1);
+         % end
 
 
 
@@ -2285,14 +2302,6 @@ classdef TRYMPC < handle
          C.archive.optimizations{end}.solver_specific.QP_sol = C.SQP_info.QP_sol;
          C.archive.optimizations{end}.solver_specific.step_size = C.SQP_info.step_size;
          C.archive.optimizations{end}.solver_specific.SQP_settings  = C.SQP_settings;
-         % C.archive.optimizations{end}.quadratic_cost = C.quadratic_cost;
-         % C.archive.optimizations{end}.parameters     = C.parameters;
-         % C.archive.optimizations{end}.Dt             = C.horizon.Dt;
-         % C.archive.optimizations{end}.time = (0:C.horizon.N).*C.horizon.Dt;
-         % C.archive.optimizations{end}.solve_time = solve_time;
-         % C.archive.optimizations{end}.decision = solution.decision;
-         % C.archive.optimizations{end}.dual_eq = solution.dual_eq;
-         % C.archive.optimizations{end}.dual_in = solution.dual_in;
 
 
          % convergence measure:
@@ -2303,7 +2312,7 @@ classdef TRYMPC < handle
             disp(['      -- return status: ',char(C.archive.optimizations{end}.return_status)])
             disp(['      --    solve time: ',sec2str(C.internal_mpc.solve_time.total)])
             disp(['      -- N. iterations: ',num2str(C.archive.optimizations{end}.n_iterations)])
-            disp(['   Convergence Measure: ',num2str(C.archive.optimizations{end}.n_iterations)])
+            disp( '   Convergence Measure: ')
             disp(['              -- stationarity: ',num2str(stationarity)]) % C.archive.optimizations{end}.convergence.stationarity(end)
             disp(['              --     equality: ',num2str(equality)]) % C.archive.optimizations{end}.convergence.equality(end)
             disp(['              --   inequality: ',num2str(inequality)]) % C.archive.optimizations{end}.convergence.inequality(end)
@@ -2477,12 +2486,12 @@ problems, so maybe I will do this for the reference too at some point.
          else
 
             % To monitor progress:
-            best_staionarity = C.SQP_info.convergence.stationarity;
-            best_equality    = C.SQP_info.convergence.equality;
+            best_staionarity = inf;
+            best_equality    = inf;
             no_prog_stationarity = 0;
             no_prog_equality = 0;
             if C.flag_has_inequality
-               best_inequality  = C.SQP_info.convergence.inequality;
+               best_inequality  = inf;
                no_prog_inequality   = 0;
             else
                no_prog_inequality   = [];
@@ -2491,7 +2500,6 @@ problems, so maybe I will do this for the reference too at some point.
 
             C.SQP_info.return_status = "Maximum number of iterations reached.";
             for iteration = 1:C.SQP_settings.max_N_iterations
-
                % Find Newton Step (Dx, lambda_next, mu_next):
                C.SQP_Newton_Step
 
@@ -2507,20 +2515,22 @@ problems, so maybe I will do this for the reference too at some point.
                   C.SQP_info.return_status = "Solve Successful.";
                   break;
                else % Monitor progress:
-                  if best_staionarity < C.SQP_info.convergence.stationarity(end)
+                  if best_staionarity <= C.SQP_info.convergence.stationarity(end)
                      no_prog_stationarity = no_prog_stationarity + 1;
+                     % dispt('stationarity: (best, current)',[best_staionarity, C.SQP_info.convergence.stationarity(end) , best_staionarity - C.SQP_info.convergence.stationarity(end)])
+                     % round((best_staionarity- C.SQP_info.convergence.stationarity(end)) * 1e18 )
                   else
                      best_staionarity = C.SQP_info.convergence.stationarity(end);
                      no_prog_stationarity = 0;
                   end
-                  if best_equality < C.SQP_info.convergence.equality(end)
+                  if best_equality <= C.SQP_info.convergence.equality(end)
                      no_prog_equality = no_prog_equality + 1;
                   else
                      best_equality = C.SQP_info.convergence.equality(end);
                      no_prog_equality = 0;
                   end
                   if C.flag_has_inequality
-                     if best_inequality > C.SQP_info.convergence.inequality(end)
+                     if best_inequality <= C.SQP_info.convergence.inequality(end)
                         no_prog_inequality = no_prog_inequality + 1;
                      else
                         best_inequality = C.SQP_info.convergence.inequality(end);
@@ -2531,10 +2541,12 @@ problems, so maybe I will do this for the reference too at some point.
                      C.SQP_info.return_status = ['No progress for ',num2str(progress_tolerance),' iterations...'];
                      break;
                   end
-
-                  % dispt('stationarity: ',best_staionarity)
-                  % dispt('    equality: ',best_equality)
-                  % dispt('  inequality: ',best_inequality)
+                  % 
+                  % dispt('iter: ',iteration)
+                  % dispt('stationarity: (best, current)',[best_staionarity, C.SQP_info.convergence.stationarity(end) , best_staionarity - C.SQP_info.convergence.stationarity(end)])
+                  % dispt('    equality: (best, current, diff)',[best_equality, C.SQP_info.convergence.equality(end), best_equality - C.SQP_info.convergence.equality(end)])
+                  % % [best_equality, C.SQP_info.convergence.equality(end), best_equality - C.SQP_info.convergence.equality(end)]
+                  % dispt('  inequality: (best, current)',[best_inequality, C.SQP_info.convergence.inequality(end)])
                   % dispt('no progress: (stationarity) ',no_prog_stationarity)
                   % dispt('no progress:     (equality) ',no_prog_equality)
                   % dispt('no progress:   (inequality) ',no_prog_inequality)
@@ -2568,12 +2580,14 @@ problems, so maybe I will do this for the reference too at some point.
          %%%%%%%%%% Prepare Objective matrices
          C.internal_mpc.Arg_Lagrangian.decision = C.internal_mpc.decision;
          C.internal_mpc.Arg_objective.decision = C.internal_mpc.decision;
+         C.internal_mpc.Arg_constraints.decision = C.internal_mpc.decision;
 
          % Hessian of Lagrangian w.r.t. primal
          HL = sparse(C.cas.problem.Lagrangian.H.F.call(C.internal_mpc.Arg_Lagrangian).out);
          min_eig = min(eig(HL));
-         if min_eig < 1
-            HL = HL + speye(C.cas.problem.decision.len)*min_eig; % ensure positive definiteness
+         if min_eig < 1e-8
+            HL = HL + speye(C.cas.problem.decision.len)*(abs(min_eig)+1e-8); % ensure positive definiteness
+            % dispt('min eig: ',min_eig)
          end
 
          % Jacobian of objective w.r.t. primal
@@ -2610,7 +2624,7 @@ problems, so maybe I will do this for the reference too at some point.
                   case "quadprog_TR"
                      QP_options = C.SQP_settings.quadprog_TR_options;
                end
-               [C.internal_mpc.QP_sol.Dx,C.internal_mpc.QP_sol.FVAL,C.internal_mpc.QP_sol.EXITFLAG,C.internal_mpc.QP_sol.OUTPUT,C.internal_mpc.QP_sol.LAMBDA] ...
+               [C.internal_mpc.QP_sol.Dz,C.internal_mpc.QP_sol.FVAL,C.internal_mpc.QP_sol.EXITFLAG,C.internal_mpc.QP_sol.OUTPUT,C.internal_mpc.QP_sol.LAMBDA] ...
                   = quadprog(HL,Jf',Ain,bin,Aeq,beq,[],[],C.internal_mpc.decision,QP_options);
          end
 
@@ -2625,7 +2639,7 @@ problems, so maybe I will do this for the reference too at some point.
 
          % just for ease of writing the code:
          z  = C.internal_mpc.decision; 
-         Dz = C.internal_mpc.QP_sol.Dx;
+         Dz = C.internal_mpc.QP_sol.Dz;
          lambda      = C.internal_mpc.lambda;
          lambda_next = C.internal_mpc.QP_sol.LAMBDA.eqlin;
          if C.flag_has_inequality
@@ -2651,7 +2665,7 @@ problems, so maybe I will do this for the reference too at some point.
 
 
                   % Find multiplier "ny" for merit function: (based on lagrangian multipliers at the candidate next guess, so has to be recomputed every time)
-                  ny = max(abs([lambda_new;mu_new]),[],"all")+10^-3; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
+                  ny = max(abs([lambda_new;mu_new]),[],"all")+1e1; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
 
                   % Find current merit: (must be recomputed every time because of the updated "ny" muliplier)
                   current_merit = full(C.merit(z,ny));
@@ -2661,7 +2675,8 @@ problems, so maybe I will do this for the reference too at some point.
                   next_merit = full(C.merit(z_new,ny));
                   % dispt('Next merit:',next_merit)
 
-                  if next_merit < current_merit || a*C.SQP_settings.backtracking_rate < C.SQP_settings.backtracking_min_step_size
+                  % dispt('Merit decrease:',next_merit-current_merit,'a:',a)
+                  if (next_merit < current_merit) || (a*C.SQP_settings.backtracking_rate < C.SQP_settings.backtracking_min_step_size)
                      break;
                   end
                   a = a*C.SQP_settings.backtracking_rate;
@@ -2683,7 +2698,7 @@ problems, so maybe I will do this for the reference too at some point.
                   mu_new     = (1-a)*mu + a*mu_next;
 
                   % Find multiplier "ny" for merit function: (based on lagrangian multipliers at the candidate next guess, so has to be recomputed every time)
-                  ny = max(abs([lambda_new;mu_new]),[],"all")+10^-3; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
+                  ny = max(abs([lambda_new;mu_new]),[],"all")+10^-8; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
 
                   % Find current merit: (must be recomputed every time because of the updated "ny" muliplier)
                   current_merit = full(C.merit(z,ny));
@@ -2711,6 +2726,10 @@ problems, so maybe I will do this for the reference too at some point.
          % log step size:
          C.SQP_info.step_size(end+1) = a;
 
+         % delete_me_1 = [z Dz C.internal_mpc.decision];
+         % disp('step: [z Dz dec.]')
+         % disp(delete_me_1(1:10,:))
+         % dispt('a:',a,'Newton step norm:', norm(Dz,2))
       end
 
 
@@ -2751,7 +2770,6 @@ problems, so maybe I will do this for the reference too at some point.
 
       %%%% Check if SQP has converged
       function all_converged = SQP_converged(C)
-         
          % Get convergence measures:
          [stationarity,equality,inequality] = C.convergence;
          C.SQP_info.convergence.stationarity(end+1) = stationarity;
@@ -2762,7 +2780,12 @@ problems, so maybe I will do this for the reference too at some point.
 
          flag_Lagrangian_converged = (stationarity <= C.SQP_settings.tolerance_lagrangian);
          flag_equality_converged   = (equality <= C.SQP_settings.tolerance_equality);
-         flag_inequality_converged = (inequality >= -C.SQP_settings.tolerance_inequality);
+         if C.flag_has_inequality
+            flag_inequality_converged = (inequality >= -C.SQP_settings.tolerance_inequality);
+         else
+            flag_inequality_converged = 1;
+         end
+         
          all_converged = flag_Lagrangian_converged && flag_inequality_converged && flag_equality_converged;
       end
    end
@@ -2841,7 +2864,27 @@ Relevant options:
          stationarity  = full(max(abs(C.cas.problem.Lagrangian.J.F.call(Arg_Lagrangian).out))); % maximum sationarity violation
          equality      = full(max(abs(C.cas.problem.equality.F.call(Arg_constraints).out))); % maximum equality violation
          if C.flag_has_inequality
-            inequality    = full(min(C.cas.problem.inequality.F.call(Arg_constraints).out));    % maximum inequality violation
+            % note that the inequalitites are on the form (h(z) >= 0),
+            % meaning that the most negative number is the most severe
+            % violation:
+            
+            % worst_inequality_value = full(min(C.cas.problem.inequality.F.call(Arg_constraints).out));    % maximum inequality violation
+
+            % If the wors value still satisfies the inequality constraints
+            % (worst_inequality_value > 0), then we say that the
+            % violation is zero:
+
+            % violation = min([0 worst_inequality_value]);
+
+            % We want the convergence measure to be a positive value, that
+            % should be as small as possible:
+            
+            % inequality = -violation;
+
+
+            %%%%% But we do it all in one line to avoid storing
+            %%%%% intermetiate variables:
+            inequality = -min([0 full(min(C.cas.problem.inequality.F.call(Arg_constraints).out))]);
          else
             inequality    = 0;
          end
@@ -3079,14 +3122,14 @@ Relevant options:
             C
             Dt (1,1) double {mustBePositive,mustBeReal}
          end
+
          C.horizon.Dt = Dt;
          if isfield(C.horizon,'N')
             C.horizon.T = C.horizon.Dt * C.horizon.N;
-         else
-            C.usererror('do not set the step size Dt before defining the horizon using "def_horizon".')
          end
 
          C.flag_Dt_changed = true;
+         C.horizon_decider = "Dt";
       end
 
       function set_T(C,T)
@@ -3095,14 +3138,13 @@ Relevant options:
             T (1,1) double {mustBePositive,mustBeReal}
          end
 
+         C.horizon.T = T;
          if isfield(C.horizon,'N')
-            C.horizon.T = T;
             C.horizon.Dt = C.horizon.T / C.horizon.N;
-         else
-            C.usererror('do not set the horizon length T before defining the horizon using "def_horizon".')
          end
 
          C.flag_Dt_changed = true;
+         C.horizon_decider = "T";
       end
    
       function set.parameters(C,in)
@@ -3630,6 +3672,10 @@ Relevant options:
             options.mark_samples (1,1) logical = true;
             options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
             options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
+            options.legend (1,:) string
+            options.linestyle (1,:) string
+            options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
+            options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
          end
 
          % create figure object to plot in
@@ -3688,6 +3734,10 @@ Relevant options:
             options.mark_samples (1,1) logical = true;
             options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
             options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
+            options.legend (1,:) string
+            options.linestyle (1,:) string
+            options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
+            options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
          end
 
          % ID_text = string(['ID: ',char(C.ID),' - ',char(C.archive.optimizations{options.optimization_number}.ID),' - solver: ',char(C.archive.optimizations{options.optimization_number}.solver)]);
@@ -3777,7 +3827,11 @@ Relevant options:
             % options.input (1,:) string
             % options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             % options.mark_samples (1,1) logical = true;
-            % options.transparency (1,1) 
+            %options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
+            % options.legend (1,:) string
+            % options.linestyle (1,:) string
+            % options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
+            % options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
          end
 
 
@@ -3819,6 +3873,17 @@ Relevant options:
                time_scaler = @(t) t/(60*60*24*30.44);
             case "years"
                time_scaler = @(t) t/(60*60*24*365.25);
+         end
+
+
+         % Prepare display names (legend):
+         if isfield(options,'legend')
+            if length(options.legend) ~= length(options.display_number)
+               C.usererror('the "legend" argument must be a string array with the same length as the number of solutions to display (siulation_/optimization_number)')
+            end
+            disp_names = options.legend;
+         else
+            disp_names = string(options.display_number);
          end
 
 
@@ -3874,20 +3939,40 @@ Relevant options:
                   end
                   time = time_scaler(data(options.display_number(i)).time);
 
-                  % generate nice color
-                  if L == 1 || options.multiplot == "separate"
-                     color = C.plotting.color.(type).(name);
-                  elseif options.multiplot == "ontop"
-                     color = interp1([0 (L+1)/2 L+1],[0 0 0; C.plotting.color.(type).(name); 1 1 1],i);
+                  % Manage color
+                  if isfield(options,'colors')
+                     if isa(options.colors,"string")
+                        color = GetColorCode(options.colors(i));
+                     elseif isa(options.colors,"double") && length(options.colors{i}) == 3
+                        color = options.colors{i};
+                     else
+                        C.usererror('The colors arguments must either be a string array of arguments for the "GetColorCode" function, or be a cell array of RGB triplets.')
+                     end
+                  elseif options.color_match == "solution"
+                     color = GetColorCode(i);
+                  elseif options.color_match == "plot"
+                     if L == 1 || options.multiplot == "separate"
+                        color = C.plotting.color.(type).(name);
+                     elseif options.multiplot == "ontop"
+                        color = interp1([0 (L+1)/2 L+1],[0 0 0; C.plotting.color.(type).(name); 1 1 1],i);
+                     end
                   end
+
+                  % Menage linestyle (if externally providin linestyle, it is on a solution basis, if not, the linestyle is dictated by the variable preference)
+                  if isfield(options,'linestyle')
+                     linestyle = options.linestyle(i);
+                  else
+                     linestyle = C.plotting.linestyle.(type).(name);
+                  end
+
 
                   plot(tile,...
                        time,...
                        variable,...
                        Color=[color options.transparency],...
-                       LineStyle=C.plotting.linestyle.(type).(name),...
+                       LineStyle=linestyle,...
                        LineWidth=C.plotting.linewidth.(type).(name),...
-                       DisplayName=num2str(options.display_number(i)));
+                       DisplayName=disp_names(i));
 
 
 
