@@ -1828,19 +1828,19 @@ classdef TRYMPC < handle
 
 
             % Disturbances
-            options.input_disturbance (1,1) function_handle = @(~,~,~) 0;  % input disturbance (additive)
+            options.input_disturbance (1,1) function_handle = @(~,~,~) inf;  % input disturbance (additive) (on the form: @(C,t,x) (...) )
 
             % Miscellaneous
             options.speed (1,1) logical = false; % Setting this to true will make it disregard storing data along the way, and avoid doing unnecessary things in the controller and simulator, such that the simulation will finish faster. The down-side is that little information about the simulation is stored, such that debugging and analyzing becomes harder.
-
+            options.halting_condition (1,1) function_handle = @(s,i,p) 0; % if this outputs a prositive value, than we halt the simulation. (arguments s,i,p are vectors, not structs)
 
             %%% MPC options:
             mpc_options.initial_guess_primal (:,1) double {mustBeReal}
             mpc_options.initial_guess_dual_eq (:,1) double {mustBeReal}
             mpc_options.initial_guess_dual_in (:,1) double {mustBeReal}
-            mpc_options.state_ref (:,:) double
-            mpc_options.algeb_ref (:,:) double 
-            mpc_options.input_ref (:,:) double
+            % mpc_options.state_ref (:,:) double
+            % mpc_options.algeb_ref (:,:) double 
+            % mpc_options.input_ref (:,:) double
          end
 
          if ~C.flag_dynamics_defined
@@ -1861,7 +1861,11 @@ classdef TRYMPC < handle
          C.simulation.ode_options   = options.ode_options;
          C.simulation.sampling_time = options.sampling_time;
          C.simulation.control_delay_scaler = options.control_delay_scaler;
-         C.simulation.input_disturbance = options.input_disturbance;
+         if isinf(options.input_disturbance(C,options.start_time,init_state))
+            C.simulation.input_disturbance = "none";
+         else
+            C.simulation.input_disturbance = options.input_disturbance;
+         end
 
          % Assume extarnal controller, and set to true if internal is used:
          C.internal_mpc.internal_controller = false;
@@ -2000,10 +2004,18 @@ classdef TRYMPC < handle
          until_sample = @(control_delay) min(C.simulation.sampling_time - control_delay,  C.simulation.duration - (C.internal_sim.time - C.simulation.start_time));
 
          % if the control signal is to be computed continuously (at each point within the ode-integrator)
-         if isinf(C.simulation.sampling_time)
-            C.internal_sim.ode_inputs = @(t,x) C.simulation.controller_handle(C,t,x) + C.simulation.input_disturbance(C,t,x);
+         if isa(C.simulation.input_disturbance,'function_handle')
+            if isinf(C.simulation.sampling_time)
+               C.internal_sim.ode_inputs = @(t,x) C.simulation.controller_handle(C,t,x) + C.simulation.input_disturbance(C,t,x);
+            else
+               C.internal_sim.ode_inputs = @(t,x) C.internal_sim.u_current + C.simulation.input_disturbance(C,t,x);
+            end
          else
-            C.internal_sim.ode_inputs = @(t,x) C.internal_sim.u_current + C.simulation.input_disturbance(C,t,x);
+            if isinf(C.simulation.sampling_time)
+               C.internal_sim.ode_inputs = @(t,x) C.simulation.controller_handle(C,t,x);
+            else
+               C.internal_sim.ode_inputs = @(t,x) C.internal_sim.u_current;
+            end
          end
 
          if C.simulation.control_delay_scaler
@@ -2012,7 +2024,7 @@ classdef TRYMPC < handle
          
          
          %%% Prepare displays
-         fprintf(['Simulating (',char(datetime('now','Format','hh:mm')),') ... ']);
+         fprintf(['Simulating (',char(datetime('now','Format','HH:mm')),') ... ']);
          C.internal_sim.linelength = 0;
          total_dot_length = 3; dot_length = 0;
          sim_time = tic;
@@ -2020,6 +2032,9 @@ classdef TRYMPC < handle
          %%%%%%% SIMULATE:
          while C.internal_sim.time < C.simulation.duration + C.simulation.start_time
             
+            if options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
+               break;
+            end
             display_progress
 
             if C.simulation.control_delay_scaler
@@ -2087,7 +2102,12 @@ classdef TRYMPC < handle
             C.internal_sim.state = C.internal_sim.x_sim(end,:)';
          end
 
-         display_progress
+         if options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
+            disp(' ')
+            disp('... Halting Condition met. ')
+         else
+            display_progress
+         end
 
          function display_progress
             dot_length = mod(dot_length,total_dot_length) + 1;
@@ -2104,8 +2124,8 @@ classdef TRYMPC < handle
 
          % reocompute and log all inputs if relevant:
          if C.flag_has_input
-            fprintf(' - archiving input signals... ')
-            archive_time = tic;
+            % fprintf(' - archiving input signals... ')
+            % archive_time = tic;
             C.archive.simulations{end}.sim.input_disturbance = [];
             % C.archive.simulations{end}.sim.input_controller = [C.archive.simulations{end}.stage(1).input_controller C.archive.simulations{end}.sim.input_controller];
             x_sim = C.archive.simulations{end}.sim.state;
@@ -2115,14 +2135,22 @@ classdef TRYMPC < handle
                x_sim = [x_sim; C.archive.simulations{end}.sim.algeb];
             end
 
-            % Loop over all time instances of simulation, and recalculate
-            % the disturbance (note that this disturbance can vary within the matlab "ode" functions, thus we cannot simply record the values at each stage. I.e. it is not piecewise constant)
-            for i = 1:length(C.archive.simulations{end}.sim.time)
-               t = C.archive.simulations{end}.sim.time(i);
-               x = x_sim(:,i);
-               C.archive.simulations{end}.sim.input_disturbance(:,i) = C.simulation.input_disturbance(C,t,x);
+            if isa(C.simulation.input_disturbance,'function_handle')
+               % Loop over all time instances of simulation, and recalculate
+               % the disturbance (note that this disturbance can vary within the matlab "ode" functions, thus we cannot simply record the values at each stage. I.e. it is not piecewise constant)
+               fprintf(' - archiving input signals... ')
+               archive_time = tic;
+               for i = 1:length(C.archive.simulations{end}.sim.time)
+                  t = C.archive.simulations{end}.sim.time(i);
+                  x = x_sim(:,i);
+                  C.archive.simulations{end}.sim.input_disturbance(:,i) = C.simulation.input_disturbance(C,t,x);
+               end
+               C.archive.simulations{end}.disturbance_archive_time = toc(archive_time);
+               disp(['done. ',sec2str(C.archive.simulations{end}.disturbance_archive_time)])
+            elseif isa(C.simulation.input_disturbance,'string') && C.simulation.input_disturbance ~= "none"
+               error('input_disturbance is neither "none" nor a funciton_handle... ')
             end
-
+            
             % Either the stage-wise control-signals are already recorded,
             % and we simply need to add the very first control signal at
             % the start,,,
@@ -2132,19 +2160,26 @@ classdef TRYMPC < handle
                % ...or we need to loop over all time instances of
                % simulation, to get the non-piece-wise control signal 
                % (in the case of "sampling_time" = inf, the controller re-evaluated at each time instance within the "ode" function, and we need to reconstruct the signal similarly to what we do for the disturbance)
+               fprintf(' - archiving input signals... ')
+               archive_time = tic;
                for i = 1:length(C.archive.simulations{end}.sim.time)
                   t = C.archive.simulations{end}.sim.time(i);
                   x = x_sim(:,i);
                   C.archive.simulations{end}.sim.input_controller(:,i) = C.simulation.controller_handle(C,t,x);
                end
+               C.archive.simulations{end}.input_archive_time = toc(archive_time);
+               disp(['done. ',sec2str(C.archive.simulations{end}.input_archive_time)])
             end
 
-            % Combine controller signal and disturbance to generate the
-            % effective input to the system
-            C.archive.simulations{end}.sim.input_effective = C.archive.simulations{end}.sim.input_controller + C.archive.simulations{end}.sim.input_disturbance;
+            if isa(C.simulation.input_disturbance,'function_handle')
+               % Combine controller signal and disturbance to generate the
+               % effective input to the system
+               C.archive.simulations{end}.sim.input_effective = C.archive.simulations{end}.sim.input_controller + C.archive.simulations{end}.sim.input_disturbance;
+            else
+               C.archive.simulations{end}.sim.input_effective = C.archive.simulations{end}.sim.input_controller;
+            end
 
-            C.archive.simulations{end}.input_archive_time = toc(archive_time);
-            disp(['done. ',sec2str(C.archive.simulations{end}.input_archive_time)])
+            
          end
 
          % Turn the speed off:
@@ -3296,6 +3331,19 @@ Relevant options:
       %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% END
 
 
+      function set_ref(C,type,trajectory)
+         arguments
+            C
+         end
+         arguments(Repeating)
+            type (1,1) string {mustBeMember(type,["state","algeb","input"])}
+            trajectory (:,:) double
+         end
+         ' function to define a reference funciton @(t) (...) --> [ ; ; ]
+         for i = 1:length(type)
+
+         end
+      end
 
 
 
@@ -4125,7 +4173,7 @@ Relevant options:
                         type_2 = type;
                      end
                      variable = data(options.display_number(i)).(type_2)(C.names.ind.(type).(name),:);
-                     if type == "input"
+                     if type == "input" && display_type ~= "simulation"
                         variable(:,end+1) = nan; % make inputs the same length as the time vector
                      end
                   end
