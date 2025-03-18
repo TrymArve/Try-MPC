@@ -422,8 +422,10 @@ which works the same way, but only acts on the terminal state.
 %}
 
 %%%%%%%%%%%%%%%%% Stage Constraints:
-% Manually provide a stage-wise constraint on the sum of x and th, such that it is smaller then 10:
-inequality.sum_of_pos = s.x + s.th + 10;
+% Manually provide a stage-wise constraint on the total kinetic energy of
+% the system to be smaller than 0.12 J:
+max_kinetic_energy = 0.12;
+inequality.kinetic_energy = @(s,a,i,p) -(0.5*p.mx*s.dx^2 + 0.5*p.mth*(s.dth*p.L)^2)  + max_kinetic_energy;
 
 % We also want to add bounds to the pendulum angle (th), and the control input (ux):
 C.def_stage_constraints("lower_bounds",["th","ux"],"upper_bounds",["th","ux"],inequality=inequality)
@@ -432,9 +434,9 @@ C.def_stage_constraints("lower_bounds",["th","ux"],"upper_bounds",["th","ux"],in
 %%%%%%%%%%%%%%%%% Terminal Constraints:
 % Force the cart to be at zero, with the pendulum at rest in the upright
 % position: (note that the cart may be moving sideways)
-terminal_equality.cart_at_zero = s.x;
-terminal_equality.pendulum_at_zero = s.th; ' make use of @(s,a,i,p) instead (must update the TRYMPC instance to accomodate this...)
-terminal_equality.pendulum_at_still = s.dth;
+terminal_equality.cart_at_zero = @(s,a,i,p) s.x;
+terminal_equality.pendulum_at_zero = @(s,a,i,p) s.th;
+terminal_equality.pendulum_at_still = @(s,a,i,p) s.dth;
 % Define terminal constrainst, but also add bounds on the terminal speed of
 % the cart:
 C.def_terminal_constraint("equality",terminal_equality,...  % Append the terminal equality constraints
@@ -468,8 +470,14 @@ C.display_problem(print_level)
 % Check sparsity of the Hessian of the objective and Lagrangian (Hessian w.r.t. the decision variables (primal))
 C.display_sparsity(["objective","Lagrangian"])
 
+
+%% Constraint Jacobian
+
 % And check out the sparsity of the Jacobian of the constraint vectors  (w.r.t. the decision variables (primal)):
 C.display_sparsity(["equality","inequality"])
+
+
+%% KKT matrix!
 
 % Lastly we can inspect the KKT matrix!
 C.display_sparsity("KKT")
@@ -544,4 +552,43 @@ nlpsol_options.ipopt.dual_inf_tol = 1e-9;
 %% Solve:
 
 sol = C.solve("ipopt","initial_state",init_state.vec,"ipopt_nlpsol_options",nlpsol_options)
-C.display_optimization;
+[tiles,Layout] = C.display_optimization;
+
+%% Note that the "display_optimization" funciton outputs "tiles" and "Layout" which allows us to edit the figure:
+
+% Each axes object can be accessed through the a handle found sorted into
+% structs as follows:
+tiles.state.x    % handle for the "x"   axes
+tiles.state.dx   % handle for the "dx"  axes
+tiles.state.th   % handle for the "th"  axes
+tiles.state.dth  % handle for the "dth" axes
+tiles.input.ux   % handle for the "ux" axes
+
+% Also, the "tiledLayout" is available through the output "Layout":
+Layout
+
+
+%% Now, we plot the kinetic energy at each stage, and verify that it is smaller than 0.12 J
+
+% One option is to retrieve the variables form the solution vector:
+dx  = C.archive.optimizations{end}.decision.str.state(3,:); % state 3 is "dx"
+dth = C.archive.optimizations{end}.decision.str.state(4,:); % state 4 if "dth"
+mx  = C.parameters.str.mx;   % get parameter "mx"
+mth = C.parameters.str.mth;  % get parameter "mth"
+L   = C.parameters.str.L;    % get parameter "L"
+
+% and compute the kinetic enegery manually:
+K = 0.5*mx*dx.^2 + 0.5*mth*(dth*L).^2; % compute the kinetic energy
+
+% and plot it manually:
+figure(Name='Kinetic Energy')
+ax = axes;
+title(ax,'Kinetic energy of the optimal Cart Pendulum offset-correction maneuver')
+hold(ax,"on"); grid(ax,"on")
+xlabel('stage'); ylabel('Kinetic Energy')
+plot(ax,[0,N],[1 1]*max_kinetic_energy,Color='k',LineStyle='--',LineWidth=1.1,DisplayName='Max. Kinetic Energy')
+plot(ax,K,'Marker','+',Color=GetColorCode('y',0.9),MarkerSize=8,LineStyle='-',LineWidth=1.3,DisplayName='Kinetic Energy')
+legend(ax)
+
+%% However!, the TRYMPC class supports automatically plotting the general stage-constraint values across stages:
+

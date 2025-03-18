@@ -807,6 +807,35 @@ classdef TRYMPC < handle
          nameValuePairs = [fields'; values'];
          C.restore_cell{end}.def_stage_constraints = nameValuePairs;
 
+         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+         % immediately convert to casadi.SX expressions:
+         if C.flag_has_algeb
+            a = C.cas.algeb;
+         else
+            a = struct;
+         end
+         if C.flag_has_input
+            i = C.cas.input;
+         else
+            i = struct;
+         end
+         if C.flag_has_param
+            p = C.cas.param;
+         else
+            p = struct;
+         end
+         if isfield(options,'equality')
+            for name = string(fieldnames(options.equality))'
+               options.equality.(name)   = options.equality.(name)(C.cas.state,a,i,p);
+            end
+         end
+         if isfield(options,'inequality')
+            for name = string(fieldnames(options.inequality))'
+               options.inequality.(name)   = options.inequality.(name)(C.cas.state,a,i,p);
+            end
+         end
+         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
          fprintf('Defining stage constraints... ');
          def_time = tic;
          if C.flag_horizon_defied
@@ -904,6 +933,36 @@ classdef TRYMPC < handle
          values = struct2cell(options);
          nameValuePairs = [fields'; values'];
          C.restore_cell{end}.def_terminal_constraint = nameValuePairs;
+
+         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+         % immediately convert to casadi.SX expressions:
+         if C.flag_has_algeb
+            a = C.cas.algeb;
+         else
+            a = struct;
+         end
+         if C.flag_has_input
+            i = C.cas.input;
+         else
+            i = struct;
+         end
+         if C.flag_has_param
+            p = C.cas.param;
+         else
+            p = struct;
+         end
+         if isfield(options,'equality')
+            for name = string(fieldnames(options.equality))'
+               options.equality.(name)   = options.equality.(name)(C.cas.state,a,i,p);
+            end
+         end
+         if isfield(options,'inequality')
+            for name = string(fieldnames(options.inequality))'
+               options.inequality.(name)   = options.inequality.(name)(C.cas.state,a,i,p);
+            end
+         end
+         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
          fprintf('Defining terminal constraints... ');
          def_time = tic;
@@ -2333,6 +2392,9 @@ classdef TRYMPC < handle
             C.internal_mpc.S.str.inequality = C.cas.horizon.constraints.inequality.str;
          end
          C.internal_mpc.ipopt_inequalities.expr = C.internal_mpc.S.vec;
+         
+         % % Verify that the constraints are sorted:
+         % spy(jacobian(C.internal_mpc.ipopt_inequalities.expr,C.cas.problem.decision.vec))
 
          [Arg_constraints,in_fields] = C.create_Arg_symbolic_constraints;
          Arg_constraints.out = C.internal_mpc.ipopt_inequalities.expr;
@@ -2394,13 +2456,21 @@ problems, so maybe I will do this for the reference too at some point.
             C.internal_mpc.lower_limits =  zeros(C.display.problem.n_equality + C.display.problem.n_inequality,1);
             C.internal_mpc.upper_limits =  zeros(C.display.problem.n_equality + C.display.problem.n_inequality,1);
             if C.flag_has_bounds
-               for k = 0:C.horizon.N-1
-                  C.internal_mpc.upper_limits(C.internal_mpc.S.ind.inequality.(['stage_',num2str(k)]).bounds) = inf;
+               for k = 0:C.horizon.N - ~isfield(C.internal_mpc.S.ind.inequality,['stage_',num2str(C.horizon.N)])
+                  for name = string(fieldnames(C.internal_mpc.S.ind.inequality.(['stage_',num2str(k)])))'
+                     if isa(C.internal_mpc.S.ind.inequality.(['stage_',num2str(k)]).(name),'double')
+                        C.internal_mpc.upper_limits(C.internal_mpc.S.ind.inequality.(['stage_',num2str(k)]).(name)) = inf;
+                     else
+                        for name_2 = string(fieldnames(C.internal_mpc.S.ind.inequality.(['stage_',num2str(k)]).(name)))'
+                           C.internal_mpc.upper_limits(C.internal_mpc.S.ind.inequality.(['stage_',num2str(k)]).(name).(name_2)) = inf;
+                        end
+                     end
+                  end
                end
             end
-            if C.flag_has_terminal_bounds
-               C.internal_mpc.upper_limits(C.internal_mpc.S.ind.inequality.(['stage_',num2str(C.horizon.N)]).bounds) = inf;
-            end
+            % if C.flag_has_terminal_bounds
+            %    C.internal_mpc.upper_limits(C.internal_mpc.S.ind.inequality.(['stage_',num2str(C.horizon.N)]).bounds) = inf;
+            % end
          else
             C.internal_mpc.solver_def.g = [C.cas.problem.equality.F.call(C.internal_mpc.Arg_constraints).out];
 
@@ -3296,6 +3366,9 @@ Relevant options:
          C.cas.constraints = [];
          C.cas.horizon = [];
          C.cas.problem = [];
+         
+         C.internal_mpc = struct;
+         C.internal_sim = struct;
 
          C.clear_flags
       end
@@ -3739,29 +3812,7 @@ Relevant options:
             options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
          end
-
-         % ID_text = string(['ID: ',char(C.ID),' - ',char(C.archive.optimizations{options.optimization_number}.ID),' - solver: ',char(C.archive.optimizations{options.optimization_number}.solver)]);
-         % other_text = ['Dt: ',num2str(C.archive.optimizations{options.optimization_number}.Dt),'  |   Integrator: ',char(C.integrator.integrator)];
-         % return_status = strrep(C.archive.optimizations{options.optimization_number}.return_status,'_','\_');
-         % title_text = [ID_text ; other_text; append("return\_status: '",return_status,"'")];
-         %
-         % figure_text = [char(C.Name), ' : optimization ',num2str(options.optimization_number)];
-         % 
-         % % create figure object to plot in
-         % figure(Name=figure_text)
-         % 
-         % data = C.archive.optimizations{options.optimization_number}.decision.str;
-         % data.time = C.archive.optimizations{options.optimization_number}.time;
-         % 
-         % % Number:
-         % options.display_number = options.optimization_number;
-         % 
-         % [tiles,Layout] = display_trajectories(C,...
-         %    "optimization",...
-         %    data,...
-         %    title_text,...
-         %    options);
-         
+ 
 
 
          % create figure object to plot in
@@ -3804,6 +3855,64 @@ Relevant options:
 
       end
 
+      function [tiles,Layout] = display_constraints(C,options)
+         arguments
+            C
+
+            options.optimization_number (1,:) double {mustBeInteger,mustBePositive} = length(C.archive.optimizations);
+
+            options.tiledlayout_varargin (1,:) cell
+            options.gridstyle (1,1) string {mustBeMember(options.gridstyle,["flow","vertical","horizontal"])} = "flow";
+            options.state (1,:) string
+            options.algeb (1,:) string
+            options.input (1,:) string
+            options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
+            options.mark_samples (1,1) logical = true;
+            options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
+            options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
+            options.legend (1,:) string
+            options.linestyle (1,:) string
+            options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
+            options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
+         end
+
+         % create figure object to plot in
+         figure_text = [char(C.Name), ' : constraints'];
+         figure(Name=figure_text)
+
+         % Prepare title text:
+         ID_text = append("ID:",C.ID," - opt-ID(index): ");
+         solver_text = "Solver (n.iter/sol.time): ";
+         integr_text = "Integrator (order/incr): ";
+         return_text = "Return Status: ";
+
+         % Prepare data
+         data = dictionary;
+
+         for i = options.optimization_number
+            ID_text = append(ID_text," / ",C.archive.optimizations{i}.ID,"(",string(i),")");
+            solver_text = append(solver_text," / ",C.archive.optimizations{i}.solver,"(",string(C.archive.optimizations{i}.n_iterations),"/",sec2str(C.archive.optimizations{i}.solve_time.total),")");
+            integr_text = append(integr_text," / ",C.archive.optimizations{i}.integrator.integrator,"(",string(C.archive.optimizations{i}.integrator.order),"/",string(C.archive.optimizations{i}.integrator.n_increments),")"); 
+            return_status = strrep(C.archive.optimizations{i}.return_status,'_','\_');
+            return_text = append(return_text," / ",return_status);
+
+            data(i) = C.archive.optimizations{i}.decision.str;
+            data(i).time = C.archive.optimizations{i}.time;
+         end
+
+         title_text = [ID_text ; solver_text; integr_text; return_text];
+
+
+         % Number:
+         options.display_number = options.optimization_number;
+
+         [tiles,Layout] = display_trajectories(C,...
+            "constraints",...
+            data,...
+            title_text,...
+            options);
+
+      end
    end
 
 
@@ -3813,7 +3922,7 @@ Relevant options:
          arguments
             C
             % unique:
-            display_type (1,1) string {mustBeMember(display_type,["simulation","optimization"])}
+            display_type (1,1) string {mustBeMember(display_type,["simulation","optimization","constraints"])}
             data (1,1) dictionary
             title_text string
 
@@ -3845,16 +3954,19 @@ Relevant options:
          title(Layout,title_text,'FontSize',11,'FontWeight','bold')
 
 
-         var_typ = [];
-         for type = C.var_types_notpar
-            if isfield(options,type)
-               var_typ = [var_typ type]; %#ok<AGROW>
+         if display_type == "constraints"
+            var_type = 0;
+         else
+            var_typ = [];
+            for type = C.var_types_notpar
+               if isfield(options,type)
+                  var_typ = [var_typ type]; %#ok<AGROW>
+               end
+            end
+            if isempty(var_typ)
+               var_typ = C.var_types_notpar;
             end
          end
-         if isempty(var_typ)
-            var_typ = C.var_types_notpar;
-         end
-
 
 
          % Time order
