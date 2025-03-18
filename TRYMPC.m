@@ -798,9 +798,22 @@ classdef TRYMPC < handle
             options.upper_bounds (1,:) string
             
             % General stage constraints:
-            options.equality   (1,1) struct % general stage-wise equality constraints (g() = 0)
-            options.inequality (1,1) struct % a general stage-wise inequlity constraints (h() >= 0)
+            options.equality   (1,1) struct % general stage-wise equality constraints given as anonymous functions: @(s,a,i,p) (g() = 0)
+            options.inequality (1,1) struct % general stage-wise inequlity constraints given as anonymous functions: @(s,a,i,p) (h() >= 0)
          end
+
+         % First verify that the equality and inequality options are
+         % structs of function handles
+         for type = ["equality" "inequality"]
+            if isfield(options,type)
+               for name = string(fieldnames(options.(type)))'
+                  if ~isa(options.(type).(name),'function_handle')
+                     C.usererror('The equality and inequality optional arguments must be structs with fields containing only funciton handles on the form: @(s,a,i,p) (...).')
+                  end
+               end
+            end
+         end
+
          % Prepare restoration
          fields = fieldnames(options);
          values = struct2cell(options);
@@ -927,12 +940,24 @@ classdef TRYMPC < handle
             options.inequality (1,1) struct % a general stage-wise inequlity constraints (h() >= 0)
          end
 
+         % First verify that the equality and inequality options are
+         % structs of function handles
+         for type = ["equality" "inequality"]
+            if isfield(options,type)
+               for name = string(fieldnames(options.(type)))'
+                  if ~isa(options.(type).(name),'function_handle')
+                     C.usererror('The equality and inequality optional arguments must be structs with fields containing only funciton handles on the form: @(s,a,i,p) (...).')
+                  end
+               end
+            end
+         end
+
          % ' In tutorial 2 - I try adding terminal equality constraints, but they dont seem to be fully satisfied, and the C.cas.horizon.constraints.equality.str does not have a "stage_50", which is where these constraints should be found....
          % Prepare restoration
          fields = fieldnames(options);
          values = struct2cell(options);
          nameValuePairs = [fields'; values'];
-         C.restore_cell{end}.def_terminal_constraint = nameValuePairs;
+         C.restore_cell{end}.def_terminal_constraints = nameValuePairs;
 
          %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
          % immediately convert to casadi.SX expressions:
@@ -3062,6 +3087,18 @@ Relevant options:
          optimization.solve_time     = C.internal_mpc.solve_time;
          optimization.integrator     = C.integrator;
          optimization.quadratic_cost = C.quadratic_cost;
+
+         for stage_type = ["def_stage_constraints" "def_terminal_constraints"]
+            if isfield( C.restore_cell{end}, stage_type)
+               for const_type = ["equality" "inequality"]
+                  ind = find(string(C.restore_cell{end}.(stage_type)(1,:)) == const_type,1);
+                  if ~isempty(ind)
+                     optimization.constraints.(const_type) = C.restore_cell{end}.(stage_type){2,ind};
+                  end
+               end
+            end
+         end
+
          optimization.parameters     = C.parameters;
          optimization.Dt             = C.horizon.Dt;
          optimization.N              = C.horizon.N;
@@ -3747,6 +3784,7 @@ Relevant options:
             options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
             options.legend (1,:) string
             options.linestyle (1,:) string
+            options.linewidth (1,:) string
             options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
          end
@@ -3809,6 +3847,7 @@ Relevant options:
             options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
             options.legend (1,:) string
             options.linestyle (1,:) string
+            options.linewidth (1,:) string
             options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
          end
@@ -3863,15 +3902,15 @@ Relevant options:
 
             options.tiledlayout_varargin (1,:) cell
             options.gridstyle (1,1) string {mustBeMember(options.gridstyle,["flow","vertical","horizontal"])} = "flow";
-            options.state (1,:) string
-            options.algeb (1,:) string
-            options.input (1,:) string
+            options.equality (1,:) string % specify what equality constraints to plot
+            options.inequality (1,:) string % specify what inequality constraints to plot
             options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             options.mark_samples (1,1) logical = true;
             options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
             options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
             options.legend (1,:) string
             options.linestyle (1,:) string
+            options.linewidth (1,:) string
             options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
          end
@@ -3934,11 +3973,14 @@ Relevant options:
             % options.state (1,:) string
             % options.algeb (1,:) string
             % options.input (1,:) string
+            % (options.equality (1,:) string)
+            % (options.inequality (1,:) string)
             % options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             % options.mark_samples (1,1) logical = true;
             %options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
             % options.legend (1,:) string
             % options.linestyle (1,:) string
+            % options.linewidth (1,:) string
             % options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             % options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
          end
@@ -3954,17 +3996,24 @@ Relevant options:
          title(Layout,title_text,'FontSize',11,'FontWeight','bold')
 
 
+         Types = [];
          if display_type == "constraints"
-            var_type = 0;
-         else
-            var_typ = [];
-            for type = C.var_types_notpar
-               if isfield(options,type)
-                  var_typ = [var_typ type]; %#ok<AGROW>
+            for const_type = ["equality", "inequality"]
+               if isfield(options,const_type)
+                  Types = [Types const_type]; %#ok<AGROW>
                end
             end
-            if isempty(var_typ)
-               var_typ = C.var_types_notpar;
+            if isempty(Types)
+               Types = ["equality", "inequality"];
+            end
+         else
+            for type = C.var_types_notpar
+               if isfield(options,type)
+                  Types = [Types type]; %#ok<AGROW>
+               end
+            end
+            if isempty(Types)
+               Types = C.var_types_notpar;
             end
          end
 
@@ -4006,9 +4055,14 @@ Relevant options:
          % Plot:
          L = length(options.display_number);
          for i = 1:L
-            for type = var_typ
+            for type = Types
                if ~isfield(options,type) || (isscalar(options.(type)) && options.(type) == "all")
-                  names = C.names.code.(type)';
+                  if display_type == "constraints"
+                     names = [string(fieldnames(C.archive.optimizations{options.display_number(i)}.constraints.equality))',...
+                              string(fieldnames(C.archive.optimizations{options.display_number(i)}.constraints.inequality))']; %#ok<*AGROW>
+                  else
+                     names = C.names.code.(type)';
+                  end
                else
                   names = options.(type); %#ok<*PROPLC>
                end
@@ -4019,7 +4073,12 @@ Relevant options:
                      tile = tiles(i).(type).(name);
                      hold(tile,"on");
                      grid(tile,"on");
-                     ylabel(tile,C.plotting.display_names.(type).(name),Interpreter="latex");
+
+                     if display_type == "constraints"
+                        ylabel(tile,strrep(name,"_","\_"));
+                     else
+                        ylabel(tile,C.plotting.display_names.(type).(name),Interpreter="latex");
+                     end
                      
                      if L > 1
                         legend(tile)
@@ -4031,6 +4090,10 @@ Relevant options:
                         tile.Color = [1, 1, 0.96];
                      elseif type == "input"
                         tile.Color = [1, 0.98, 0.99];
+                     elseif type == "equality"
+                        tile.Color = [0.97, 0.97, 0.99];
+                     elseif type == "inequality"
+                        tile.Color = [1, 0.95, 0.95];
                      end
 
                   elseif options.multiplot == "ontop" % for the remaining passes, reuse old axes:
@@ -4040,15 +4103,34 @@ Relevant options:
                   end
                   
                   % Prepare data:
-                  if type == "input" && display_type == "simulation"
-                     type_2 = "input_effective";
+                  if display_type == "constraints"
+                     Data = data(options.display_number(i));
+                     D.algeb = struct;
+                     D.input = struct;
+                     D.param = C.archive.optimizations{options.display_number(i)}.parameters.str;
+
+                     variable = nan(1,length(Data.time));
+                     for j = 1:(length(Data.time)-1)
+                        for variable_type = C.var_types_notpar
+                           for jj = 1:C.dim.(variable_type)
+                              D.(variable_type).(C.names.code.(variable_type)(jj)) = Data.(variable_type)(jj,j);
+                           end
+                        end
+                        variable(j) = C.archive.optimizations{options.display_number(i)}.constraints.(type).(name)(D.state,D.algeb,D.input,D.param);
+                     end
                   else
-                     type_2 = type;
+                     if type == "input" && display_type == "simulation"
+                        type_2 = "input_effective";
+                     else
+                        type_2 = type;
+                     end
+                     variable = data(options.display_number(i)).(type_2)(C.names.ind.(type).(name),:);
+                     if type == "input"
+                        variable(:,end+1) = nan; % make inputs the same length as the time vector
+                     end
                   end
-                  variable = data(options.display_number(i)).(type_2)(C.names.ind.(type).(name),:);
-                  if type == "input"
-                     variable(:,end+1) = nan; % make inputs the same length as the time vector
-                  end
+
+                  % Time:
                   time = time_scaler(data(options.display_number(i)).time);
 
                   % Manage color
@@ -4063,18 +4145,50 @@ Relevant options:
                   elseif options.color_match == "solution"
                      color = GetColorCode(i);
                   elseif options.color_match == "plot"
+                     if display_type == "constraints"
+                        if type == "equality"
+                           pre_color = GetColorCode('b',1.3);
+                        elseif type == "inequality"
+                           pre_color = GetColorCode('r');
+                        else
+                           error('DEVELOPER ERROR: neither "equality" nor "inequality"...')
+                        end
+                        
+                     else
+                        pre_color = C.plotting.color.(type).(name);
+                     end
                      if L == 1 || options.multiplot == "separate"
-                        color = C.plotting.color.(type).(name);
+                        color = pre_color;
                      elseif options.multiplot == "ontop"
-                        color = interp1([0 (L+1)/2 L+1],[0 0 0; C.plotting.color.(type).(name); 1 1 1],i);
+                        color = interp1([0 (L+1)/2 L+1],[0 0 0; pre_color; 1 1 1],i);
                      end
                   end
 
-                  % Menage linestyle (if externally providin linestyle, it is on a solution basis, if not, the linestyle is dictated by the variable preference)
+                  % Menage linestyle (if externally provided linestyle, it is on a solution basis, if not, the linestyle is dictated by the variable preference)
                   if isfield(options,'linestyle')
                      linestyle = options.linestyle(i);
                   else
-                     linestyle = C.plotting.linestyle.(type).(name);
+                     if display_type == "constraints"
+                        linestyle = '-';
+                     else
+                        linestyle = C.plotting.linestyle.(type).(name);
+                     end
+                  end
+
+                  % Menage linewidth (if externally provided linewidth, it is on a solution basis, if not, the linewidth is dictated by the variable preference)
+                  if isfield(options,'linewidth')
+                     linewidth = options.linewidth(i);
+                  else
+                     if display_type == "constraints"
+                        linewidth = 1;
+                     else
+                        linewidth = C.plotting.linewidth.(type).(name);
+                     end
+                  end
+                  
+
+                  if display_type == "constraints"
+                     plot(tile,[0 time(end)],[0 0],Color=GetColorCode('e'),LineStyle='--',HandleVisibility='off')
                   end
 
 
@@ -4083,7 +4197,7 @@ Relevant options:
                        variable,...
                        Color=[color options.transparency],...
                        LineStyle=linestyle,...
-                       LineWidth=C.plotting.linewidth.(type).(name),...
+                       LineWidth=linewidth,...
                        DisplayName=disp_names(i));
 
 

@@ -423,9 +423,10 @@ which works the same way, but only acts on the terminal state.
 
 %%%%%%%%%%%%%%%%% Stage Constraints:
 % Manually provide a stage-wise constraint on the total kinetic energy of
-% the system to be smaller than 0.12 J:
+% the system to be smaller than 0.12 J: (note that inequalityies are on the form: h(z) >= 0)
 max_kinetic_energy = 0.12;
 inequality.kinetic_energy = @(s,a,i,p) -(0.5*p.mx*s.dx^2 + 0.5*p.mth*(s.dth*p.L)^2)  + max_kinetic_energy;
+
 
 % We also want to add bounds to the pendulum angle (th), and the control input (ux):
 C.def_stage_constraints("lower_bounds",["th","ux"],"upper_bounds",["th","ux"],inequality=inequality)
@@ -572,7 +573,7 @@ Layout
 
 % One option is to retrieve the variables form the solution vector:
 dx  = C.archive.optimizations{end}.decision.str.state(3,:); % state 3 is "dx"
-dth = C.archive.optimizations{end}.decision.str.state(4,:); % state 4 if "dth"
+dth = C.archive.optimizations{end}.decision.str.state(4,:); % state 4 is "dth"
 mx  = C.parameters.str.mx;   % get parameter "mx"
 mth = C.parameters.str.mth;  % get parameter "mth"
 L   = C.parameters.str.L;    % get parameter "L"
@@ -587,8 +588,17 @@ title(ax,'Kinetic energy of the optimal Cart Pendulum offset-correction maneuver
 hold(ax,"on"); grid(ax,"on")
 xlabel('stage'); ylabel('Kinetic Energy')
 plot(ax,[0,N],[1 1]*max_kinetic_energy,Color='k',LineStyle='--',LineWidth=1.1,DisplayName='Max. Kinetic Energy')
-plot(ax,K,'Marker','+',Color=GetColorCode('y',0.9),MarkerSize=8,LineStyle='-',LineWidth=1.3,DisplayName='Kinetic Energy')
+plot(ax,0:N,K,'Marker','+',Color=GetColorCode('y',0.9),MarkerSize=8,LineStyle='-',LineWidth=1.3,DisplayName='Kinetic Energy')
 legend(ax)
 
 %% However!, the TRYMPC class supports automatically plotting the general stage-constraint values across stages:
 
+% Plot the "kinetic_energy" stage constraints that was defined earlier:
+C.display_constraints("inequality","kinetic_energy");
+
+%{
+Note that this constraint value is not the kinetic energy itself, rather it
+is the negative of the kinetic energy plus the "max_kinetic_energy". This
+is because the constraint itself is defined that way in order to formulate
+the bound on the form; h() >= 0.
+%}
