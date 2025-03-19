@@ -19,7 +19,7 @@ in order from start to finish, without anything else in between.
 % familiar with the optimization framework.
 
 
-%% Defien problem:
+%% Define problem:
 
 fresh % start fresh
 
@@ -91,7 +91,7 @@ duration = 20; % duration of simulation
 
 % This may take some time (up to a few minutes, depending on your computer)
 C.simulate(duration,controller_type="NMPC_ipopt",sampling_time=0.1)
-C.display_simulation;
+C.display_simulation("mark_samples",false);
 
 
 %{
@@ -131,17 +131,34 @@ runs faster. Although, this will come at the cost of deminished ability to
 analyze and debug after the fact.
 %}
 
-%% Or plot without sample markers:
+%% Or plot with sample markers:
 
-C.display_simulation("mark_samples",false);
+% Marks every time-point and correcponding state value that was measured at
+% that time. 
+C.display_simulation("mark_samples",true);
 
 %% A lot of information about the simulation is now available:
 
+% the simulation is archived in the same way as the optimization problems,
+% and each new simulation is appended to the end to the cell array:
 C.archive.simulations{end}
 
-%% Even the individual optimization problems are logged:
+
+%% Even the individual optimization problems within each simulation are logged:
 
 C.archive.simulations{end}.optimizations
+
+%% Let's look at the 3. optimizaiton problem that was solved:
+
+C.archive.simulations{end}.optimizations{3}
+
+%% The predicted state trajectory at that time was:
+
+% the predicted state trajectory at the third sample-time: t = 0.3s
+C.archive.simulations{end}.optimizations{3}.decision.str.state
+
+%% We can then plot this
+
 
 
 %% We can attempt to simulate using less requent sampling:

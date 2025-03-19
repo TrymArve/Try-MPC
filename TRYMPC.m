@@ -19,7 +19,7 @@ classdef TRYMPC < handle
       horizon (1,1) struct % contains information about the horizon (access to this is limited by its set-function)
       display (1,1) struct % contains information about the problem that is defined, such as number of optimization variables, number of constraints, etc.
       simulation (1,1) struct % contains information about the simulation; live initial condition, results, etc.
-      % current (1,1) struct % contains information about the current optimization, relevant for mpc schemes. (current guess, settings, etc.)
+      reference (1,1) struct % contains field with a reference "function_handle" for each variable type.
 
       % "SQP_settings" contains the settigns of the SQP algorithm / QP subproblems:
       SQP_settings (1,1) struct = struct("tolerance_lagrangian",5,...
@@ -2032,9 +2032,6 @@ classdef TRYMPC < handle
          %%%%%%% SIMULATE:
          while C.internal_sim.time < C.simulation.duration + C.simulation.start_time
             
-            if options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
-               break;
-            end
             display_progress
 
             if C.simulation.control_delay_scaler
@@ -2100,6 +2097,10 @@ classdef TRYMPC < handle
 
             C.internal_sim.time = C.internal_sim.t_sim(end);
             C.internal_sim.state = C.internal_sim.x_sim(end,:)';
+
+            if options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
+               break;
+            end
          end
 
          if options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
@@ -2182,6 +2183,8 @@ classdef TRYMPC < handle
             
          end
 
+
+
          % Turn the speed off:
          C.speed = false;
 
@@ -2253,7 +2256,7 @@ classdef TRYMPC < handle
          if ~C.speed
             C.extract_solution_ipopt
             tic;
-            C.save_archive_optimization("simulation",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count)
+            C.save_archive_optimization("simulation",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count,C.internal_sim.time)
             C.internal_mpc.archive_time = toc;
          else
             C.internal_mpc.decision = C.internal_mpc.solution_ipopt.x;
@@ -2294,6 +2297,7 @@ classdef TRYMPC < handle
             solver (1,1) string {mustBeMember(solver,["ipopt","sqp"])} = "ipopt"
 
             % Options
+            options.start_time (1,1) double = 0;
             options.initial_state (:,1) double = C.initial_state.vec;
             options.initial_guess_primal (:,1) double {mustBeReal} = zeros(C.display.problem.n_decision,1);
             options.initial_guess_dual_eq (:,1) double {mustBeReal} = zeros(C.display.problem.n_equality,1);
@@ -2362,7 +2366,7 @@ classdef TRYMPC < handle
          %    C.internal_mpc.solution.decision.str.input(:,end+1) = nan(C.dim.input,1);
          % end
 
-         C.save_archive_optimization("optimization",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count)
+         C.save_archive_optimization("optimization",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count,options.start_time)
          
          % Convergence Measure:
          C.internal_mpc.decision = C.internal_mpc.solution_ipopt.x;
@@ -2414,7 +2418,7 @@ classdef TRYMPC < handle
 
 
          %%%%%%%%%% Save to archive:
-         C.save_archive_optimization("optimization",solution,"sqp", C.SQP_info.return_status,C.SQP_info.success_flag,C.SQP_info.n_iterations)
+         C.save_archive_optimization("optimization",solution,"sqp", C.SQP_info.return_status,C.SQP_info.success_flag,C.SQP_info.n_iterations,options.start_time)
          C.archive.optimizations{end}.solver_specific.primal_iterations = C.SQP_info.primal_iterations;
          C.archive.optimizations{end}.solver_specific.dual_eq_iterations = C.SQP_info.dual_eq_iterations;
          C.archive.optimizations{end}.solver_specific.dual_in_iterations = C.SQP_info.dual_in_iterations;
@@ -3102,7 +3106,7 @@ Relevant options:
 
 
       % save optimization info to archive:
-      function save_archive_optimization(C,type,solution,solver,return_status,success_flag,n_iterations)
+      function save_archive_optimization(C,type,solution,solver,return_status,success_flag,n_iterations,start_time)
          arguments
             C 
             type (1,1) string {mustBeMember(type,["optimization","simulation"])}
@@ -3111,6 +3115,7 @@ Relevant options:
             return_status 
             success_flag 
             n_iterations 
+            start_time
          end
          optimization = struct;
          optimization.index   = nan; % this is the index in the cell array it is contained in. Is added below.
@@ -3138,7 +3143,7 @@ Relevant options:
          optimization.Dt             = C.horizon.Dt;
          optimization.N              = C.horizon.N;
          optimization.T              = C.horizon.T;
-         optimization.time           = (0:C.horizon.N).*C.horizon.Dt;
+         optimization.time           = (0:C.horizon.N).*C.horizon.Dt + start_time;
          optimization.ref            = C.internal_mpc.ref;
          optimization.initial_state  = C.internal_mpc.initial_state;
          if C.flag_has_bounds
@@ -3331,17 +3336,54 @@ Relevant options:
       %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% END
 
 
-      function set_ref(C,type,trajectory)
+      function set_ref(C,Type,Ref)
          arguments
             C
          end
          arguments(Repeating)
-            type (1,1) string {mustBeMember(type,["state","algeb","input"])}
-            trajectory (:,:) double
+            Type (1,1) string {mustBeMember(Type,["state","algeb","input"])}
+            Ref (:,:)
          end
-         ' function to define a reference funciton @(t) (...) --> [ ; ; ]
-         for i = 1:length(type)
+   
+         for type = C.var_types_notpar
+            if length(find([Type{:}]==type)) > 1
+               C.usererror(['You are trying to define several references for "',char(type),'" at the same time.'])
+            end
+         end
+         
+         for i = 1:length(Type)
+            type = Type{i};
+            ref = Ref{i};
+            
+            [n1,n2] = size(ref);
+            ntype = C.dim.(type);
+            if ~( isa(ref,'double') || isa(ref,'function_handle') )   ||   (isa(ref,'double') && ( (n2 == 1 && n1 ~= ntype)  ||  (n2 > 1 && n1 ~= ntype+1) ) )
+               C.usererror(['The ',char(type{i}),' reference must be given as:' newline...
+                            '   a "double"; ' newline ...
+                            '       ... a set-point column vector with the same length as the corresponding variable,' newline ...
+                            '       ... or a timeseries with the time-stamps as the first row, and the corresponding reference column-vectors in rows (2:end,:). That is: [time_1 time_2 ... ; ref_1 ref_2 ... ]',newline...
+                            '   a "function_handle":',newline...
+                            '       ... that takes the time as argument, and outputs a reference vector: @(t) [ ; ; ].',newline...
+                            '           (note that the output must produce a matrix whose columns are the reference vectors whenever the argument is a row-vector of points in time)'])
+            end
 
+            if isa(ref,'double') &&  n2 == 1 % vector (set-point)
+               C.reference.(type) = @(t) ref + zeros(n1,1).*reshape(t,1,[]);
+            elseif isa(ref,'double') % matrix (reference trajectory)
+               time = ref(1,:);
+               ref = ref(2:end,:);
+               C.reference.(type) = @(t) interp1(time,ref',t)';
+            elseif isa(ref,'function_handle') % This check is actually unnecessary, but for redundancy
+               try
+                  R = ref(0:10);
+               catch
+                  C.usererror(['The provided "function_handle" reference for "',char(type),'" throws an error when trying to input the time-series 0:10.'])
+               end
+               if size(R,1) ~= C.dim.(type) || size(R,2) ~= 11
+                  C.usererror(['The size of the out from the "function_handle" reference provided for "',char(type),'" does not produce an output of dimension (',char(type),',11) when the input is the time-series 0:10.'])
+               end
+               C.reference.(type) = ref;
+            end
          end
       end
 
@@ -3898,6 +3940,8 @@ Relevant options:
             options.linewidth (1,:) string
             options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
+
+            options.optimizations (1,:) cell % you may manually provide a cell array of "optimizations" structs. If not provided, the "C.archive.optimizations" cell array is used.
          end
  
 
@@ -3914,6 +3958,11 @@ Relevant options:
 
          % Prepare data
          data = dictionary;
+
+         % Prepare the correct optimizations struct:
+         if ~isfield(options,'optimizations')
+            options.optimizations = C.archive.optimizations;
+         end
 
          for i = options.optimization_number
             ID_text = append(ID_text," / ",C.archive.optimizations{i}.ID,"(",string(i),")");
