@@ -18,7 +18,7 @@ It is written with respect to being very easy to use, analyze, debug, etc. All d
 ---
 ### Some requirements:
 - matlab must have CasADi on its path, such that using f.ex: "casadi.SX.sym(...)" works. CasADi: https://web.casadi.org/
-- Some of my personal self-made function are used, so download my general matlab library and add to path: https://github.com/TrymArve/General-Matlab-Library
+- Some of my personal self-made functions are used, so download my general matlab library and add to path: https://github.com/TrymArve/General-Matlab-Library
   - I will probably include the necessary functions directly into the class at some point, but just use the library for now.
 
 ---
