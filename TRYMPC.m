@@ -183,6 +183,13 @@ classdef TRYMPC < handle
          for name = C.names.code.state'
             C.initial_state.str.(name) = 0;
          end
+
+         for type = C.var_types_notpar
+            C.reference.ref_type.(type) = "constant";
+         end
+         for type = C.var_types_notpar
+            C.set_ref(type,0)
+         end
          
          create_time = toc(create_time);
          disp(['done.  ',sec2str(create_time)]);
@@ -1874,6 +1881,7 @@ classdef TRYMPC < handle
          switch options.controller_type
             case "none"
                C.simulation.controller_handle = @(C,t,x) zeros(C.dim.input,1);
+               C.internal_sim.u_current = 0;
             case "constant"
                if C.dim.input == length(options.controller_constant)
                   C.simulation.controller_handle = @(C,t,x) options.controller_constant;
@@ -1898,6 +1906,7 @@ classdef TRYMPC < handle
 
                % make sure to start fresh, uncorreupted by previous
                % simulations/optimizations:
+               mpc_options.start_time = options.start_time;
                C.mpc_start_fresh(mpc_options)
 
                % Add initial fields:
@@ -2094,9 +2103,11 @@ classdef TRYMPC < handle
                C.log_simulation
             end
 
-
+            % update live time and state:
             C.internal_sim.time = C.internal_sim.t_sim(end);
+            C.internal_mpc.time = (0:C.horizon.N).*C.horizon.Dt + C.internal_sim.time;
             C.internal_sim.state = C.internal_sim.x_sim(end,:)';
+
 
             if options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
                break;
@@ -2245,21 +2256,35 @@ classdef TRYMPC < handle
    methods(Access = private)
       
       % basic NMPC controller
-      function u = controller_NMPC_ipopt(C,t,state)
+      function u = controller_NMPC_ipopt(C,~,state)
 
          C.internal_mpc.initial_state = state;
 
-         %%%% Temporary:
          C.internal_ipopt
          u =  full(C.internal_mpc.solution_ipopt.x(C.cas.problem.decision.ind.input(:,1)));
  
          if ~C.speed
             C.extract_solution_ipopt
             tic;
-            C.save_archive_optimization("simulation",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count,C.internal_sim.time)
+            C.save_archive_optimization("simulation",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count)
             C.internal_mpc.archive_time = toc;
          else
             C.internal_mpc.decision = C.internal_mpc.solution_ipopt.x;
+         end
+      end
+
+      % basic NMPC controller
+      function u = controller_NMPC_sqp(C,~,state)
+
+         C.internal_mpc.initial_state = state;
+
+         C.call_sqp
+         u =  full(C.internal_mpc.decision(C.cas.problem.decision.ind.input(:,1)));
+ 
+         if ~C.speed
+            tic;
+            C.save_archive_optimization("simulation",C.internal_mpc.solution,"sqp"  ,C.SQP_info.return_status,C.SQP_info.success_flag,C.SQP_info.n_iterations)
+            C.internal_mpc.archive_time = toc;
          end
       end
       
@@ -2305,9 +2330,9 @@ classdef TRYMPC < handle
             
             options.max_iterations (1,1) {mustBeInteger,mustBePositive}
             
-            options.state_ref (:,:) double 
-            options.algeb_ref (:,:) double 
-            options.input_ref (:,:) double 
+            % options.state_ref (:,:) double 
+            % options.algeb_ref (:,:) double 
+            % options.input_ref (:,:) double 
 
             options.display_result (1,1) logical = true;
             
@@ -2366,7 +2391,7 @@ classdef TRYMPC < handle
          %    C.internal_mpc.solution.decision.str.input(:,end+1) = nan(C.dim.input,1);
          % end
 
-         C.save_archive_optimization("optimization",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count,options.start_time)
+         C.save_archive_optimization("optimization",C.internal_mpc.solution,"ipopt",C.internal_mpc.solver.stats.return_status,C.internal_mpc.solver.stats.success,C.internal_mpc.solver.stats.iter_count)
          
          % Convergence Measure:
          C.internal_mpc.decision = C.internal_mpc.solution_ipopt.x;
@@ -2397,35 +2422,14 @@ classdef TRYMPC < handle
             C.set_SQP_settings("max_N_iterations",options.max_iterations)
          end
 
-         C.initialize_sqp
-         solve_time = tic;
-         C.internal_sqp
-         C.internal_mpc.solve_time.total = toc(solve_time);
-
-         % Extract Solution to use for next initial guess
-         solution.decision  = C.cas.problem.decision.retrieve(C.internal_mpc.decision);
-         primaldual = C.cas.problem.primaldual.retrieve([C.internal_mpc.decision; C.internal_mpc.lambda; C.internal_mpc.mu]);
-         solution.dual_eq = structor.subvec(C.cas.problem.primaldual,primaldual.str.lambda);
-         if C.flag_has_inequality
-            solution.dual_in = structor.subvec(C.cas.problem.primaldual,primaldual.str.mu);
-         end
-
-         % % make input trajectory the length of the others, to simplify plot
-         % if C.flag_has_input
-         %    solution.decision.str.input(:,end+1) = nan(C.dim.input,1);
-         % end
-
-
-
+         C.call_sqp
+         
+         solution = C.internal_mpc.solution;
+         
          %%%%%%%%%% Save to archive:
-         C.save_archive_optimization("optimization",solution,"sqp", C.SQP_info.return_status,C.SQP_info.success_flag,C.SQP_info.n_iterations,options.start_time)
-         C.archive.optimizations{end}.solver_specific.primal_iterations = C.SQP_info.primal_iterations;
-         C.archive.optimizations{end}.solver_specific.dual_eq_iterations = C.SQP_info.dual_eq_iterations;
-         C.archive.optimizations{end}.solver_specific.dual_in_iterations = C.SQP_info.dual_in_iterations;
-         C.archive.optimizations{end}.solver_specific.QP_sol = C.SQP_info.QP_sol;
-         C.archive.optimizations{end}.solver_specific.step_size = C.SQP_info.step_size;
-         C.archive.optimizations{end}.solver_specific.SQP_settings  = C.SQP_settings;
+         C.save_archive_optimization("optimization",solution,"sqp", C.SQP_info.return_status,C.SQP_info.success_flag,C.SQP_info.n_iterations)
 
+         
 
          % convergence measure:
          [stationarity,equality,inequality] = C.convergence;
@@ -2471,6 +2475,8 @@ classdef TRYMPC < handle
          % decision vector:
          C.internal_mpc.solver_def.x = C.cas.problem.decision.vec;
 
+         % % stage times:
+         % C.internal_mpc.time = (0:C.horizon.N).*C.horizon.Dt + C.internal_sim.time;
 
          %%%%%% Initialize ipopt functions:
          %{
@@ -2554,7 +2560,7 @@ problems, so maybe I will do this for the reference too at some point.
       function internal_ipopt(C)
 
 
-         if C.flag_numerical_values_changed
+         if C.flag_numerical_values_changed || C.reference.ref_type.master == "varying"
             C.initialize_ipopt
          end
          
@@ -2586,6 +2592,23 @@ problems, so maybe I will do this for the reference too at some point.
    
    
       %%%%%%%%%%%%%%%% SQP:
+      function call_sqp(C)
+
+         C.initialize_sqp
+         solve_time = tic;
+         C.internal_sqp
+         C.internal_mpc.solve_time.total = toc(solve_time);
+
+         % Extract Solution to use for next initial guess
+         C.internal_mpc.solution.decision  = C.cas.problem.decision.retrieve(C.internal_mpc.decision);
+         primaldual = C.cas.problem.primaldual.retrieve([C.internal_mpc.decision; C.internal_mpc.lambda; C.internal_mpc.mu]);
+         C.internal_mpc.solution.dual_eq = structor.subvec(C.cas.problem.primaldual,primaldual.str.lambda);
+         if C.flag_has_inequality
+            C.internal_mpc.solution.dual_in = structor.subvec(C.cas.problem.primaldual,primaldual.str.mu);
+         end
+
+      end
+
       function initialize_sqp(C)
 
 
@@ -2596,7 +2619,7 @@ problems, so maybe I will do this for the reference too at some point.
          C.SQP_info.return_status = [];
          C.SQP_info.success_flag  = 0;
          C.SQP_info.n_iterations  = [];
-         C.SQP_info.decision      = [];
+         % C.SQP_info.decision      = [];
          C.SQP_info.ref = C.internal_mpc.ref;
          C.SQP_info.primal_iterations = C.internal_mpc.decision;
          C.SQP_info.dual_eq_iterations = C.internal_mpc.lambda;
@@ -2612,8 +2635,9 @@ problems, so maybe I will do this for the reference too at some point.
       
       function internal_sqp(C)
 
-         progress_tolerance = 10;
+         progress_tolerance = 3;
 
+         iteration = 0;
          if C.SQP_converged
             C.SQP_info.success_flag = 1;
             C.SQP_info.return_status = "Solve Successful. (No iterations needed)";
@@ -2692,6 +2716,7 @@ problems, so maybe I will do this for the reference too at some point.
          C.SQP_info.n_iterations = iteration;
 
       end
+
    end
 
 
@@ -2956,17 +2981,20 @@ Relevant options:
          % Start fresh:
          C.internal_mpc = struct;
 
-         % add reference:
-         for type = C.var_types_notpar
-            if isfield(options,[char(type),'_ref']) 
-               if numel(options.([char(type),'_ref'])) ~= numel(C.cas.horizon.decision.str.(type))
-                  C.usererror(['number of elements of "',char(type),'_ref" is not equal to the number of elements of the ',char(type),' prediction trajectory.'])
-               end
-               C.internal_mpc.ref.(type) = options.(type);
-            else
-               C.internal_mpc.ref.(type) = zeros(size(C.cas.horizon.decision.str.(type)));
-            end
-         end
+         % add sample times:
+         C.internal_mpc.time = (0:C.horizon.N).*C.horizon.Dt + options.start_time;
+
+         % % add reference:
+         % for type = C.var_types_notpar
+         %    if isfield(options,[char(type),'_ref']) 
+         %       if numel(options.([char(type),'_ref'])) ~= numel(C.cas.horizon.decision.str.(type))
+         %          C.usererror(['number of elements of "',char(type),'_ref" is not equal to the number of elements of the ',char(type),' prediction trajectory.'])
+         %       end
+         %       C.internal_mpc.ref.(type) = options.(type);
+         %    else
+         %       C.internal_mpc.ref.(type) = zeros(size(C.cas.horizon.decision.str.(type)));
+         %    end
+         % end
 
          % initial guess:
          C.internal_mpc.decision = options.initial_guess_primal;
@@ -3069,16 +3097,23 @@ Relevant options:
 
       % Prepare Args for calling problem functions:
       function create_Arg(C)
+         arguments
+            C
+         end
          % Prepare generic arguments:
          Arg = struct;
          Arg.param = C.parameters.vec;
 
+         % % stage times:
+         % C.internal_mpc.time;
 
          % prepare Arg for objective evaluatiosn
          Arg_objective = C.quadratic_cost;
          for type = C.var_types_notpar
-            Arg_objective.([char(type),'_ref_trajectory']) = C.internal_mpc.ref.(type);
+            Arg_objective.([char(type),'_ref_trajectory']) = C.reference.(type)(C.internal_mpc.time(1:end-(type=="input")));
+            C.internal_mpc.ref.(type) = Arg_objective.([char(type),'_ref_trajectory']);
          end
+
          C.internal_mpc.Arg_objective = mergestructs(Arg_objective,Arg);
 
          % Prepare arguemnts for constraint evaluation:
@@ -3106,7 +3141,7 @@ Relevant options:
 
 
       % save optimization info to archive:
-      function save_archive_optimization(C,type,solution,solver,return_status,success_flag,n_iterations,start_time)
+      function save_archive_optimization(C,type,solution,solver,return_status,success_flag,n_iterations)
          arguments
             C 
             type (1,1) string {mustBeMember(type,["optimization","simulation"])}
@@ -3114,16 +3149,15 @@ Relevant options:
             solver
             return_status 
             success_flag 
-            n_iterations 
-            start_time
+            n_iterations
          end
          optimization = struct;
          optimization.index   = nan; % this is the index in the cell array it is contained in. Is added below.
          optimization.ID = C.generate_id;
          optimization.solver         = solver; % "ipopt"
-         optimization.return_status  = return_status;%C.internal_mpc.solver.stats.return_status;
-         optimization.success_flag   = success_flag;%C.internal_mpc.solver.stats.success;
-         optimization.n_iterations   = n_iterations;%C.internal_mpc.solver.stats.iter_count;
+         optimization.return_status  = return_status; %C.internal_mpc.solver.stats.return_status;
+         optimization.success_flag   = success_flag; %C.internal_mpc.solver.stats.success;
+         optimization.n_iterations   = n_iterations; %C.internal_mpc.solver.stats.iter_count;
          optimization.solve_time     = C.internal_mpc.solve_time;
          optimization.integrator     = C.integrator;
          optimization.quadratic_cost = C.quadratic_cost;
@@ -3143,7 +3177,7 @@ Relevant options:
          optimization.Dt             = C.horizon.Dt;
          optimization.N              = C.horizon.N;
          optimization.T              = C.horizon.T;
-         optimization.time           = (0:C.horizon.N).*C.horizon.Dt + start_time;
+         optimization.time           = C.internal_mpc.time;
          optimization.ref            = C.internal_mpc.ref;
          optimization.initial_state  = C.internal_mpc.initial_state;
          if C.flag_has_bounds
@@ -3159,6 +3193,22 @@ Relevant options:
          optimization.decision       = solution.decision;
          optimization.convergence = C.convergence_measure(optimization);
          optimization.solver_specific = struct;
+
+
+
+         switch solver
+            case "ipopt"
+            case "sqp"
+               optimization.solver_specific.primal_iterations = C.SQP_info.primal_iterations;
+               optimization.solver_specific.dual_eq_iterations = C.SQP_info.dual_eq_iterations;
+               optimization.solver_specific.dual_in_iterations = C.SQP_info.dual_in_iterations;
+               optimization.solver_specific.QP_sol = C.SQP_info.QP_sol;
+               optimization.solver_specific.step_size = C.SQP_info.step_size;
+               optimization.solver_specific.SQP_settings  = C.SQP_settings;
+         end
+
+
+
 
          if type == "optimization"
             C.archive.optimizations{end+1} = optimization;
@@ -3357,6 +3407,15 @@ Relevant options:
             
             [n1,n2] = size(ref);
             ntype = C.dim.(type);
+
+            % special case. set ref to a scalar, then that value is the
+            % reference for all elements of the variable vector:
+            if isa(ref,'double') && n1 == 1 && n2 == 1
+               n1 = ntype;
+               ref = ref.*ones(n1,1);
+            end
+
+
             if ~( isa(ref,'double') || isa(ref,'function_handle') )   ||   (isa(ref,'double') && ( (n2 == 1 && n1 ~= ntype)  ||  (n2 > 1 && n1 ~= ntype+1) ) )
                C.usererror(['The ',char(type{i}),' reference must be given as:' newline...
                             '   a "double"; ' newline ...
@@ -3367,8 +3426,14 @@ Relevant options:
                             '           (note that the output must produce a matrix whose columns are the reference vectors whenever the argument is a row-vector of points in time)'])
             end
 
+            % Set the reference_type to varying, and convert to constant if
+            % a setpoint vector is provided.
+            C.reference.ref_type.(type) = "varying";
+
+            % Create reference funcion_handles
             if isa(ref,'double') &&  n2 == 1 % vector (set-point)
                C.reference.(type) = @(t) ref + zeros(n1,1).*reshape(t,1,[]);
+               C.reference.ref_type.(type) = "constant";
             elseif isa(ref,'double') % matrix (reference trajectory)
                time = ref(1,:);
                ref = ref(2:end,:);
@@ -3383,6 +3448,14 @@ Relevant options:
                   C.usererror(['The size of the out from the "function_handle" reference provided for "',char(type),'" does not produce an output of dimension (',char(type),',11) when the input is the time-series 0:10.'])
                end
                C.reference.(type) = ref;
+            end
+
+            C.reference.ref_type.master = "constant";
+            for type = C.var_types_notpar
+               if C.reference.ref_type.(type) == "varying"
+                  C.reference.ref_type.master = "varying";
+                  break
+               end
             end
          end
       end
@@ -3419,7 +3492,7 @@ Relevant options:
                   if ~isa(value,'double') || value <= 0 || isinf(value) || isnan(value)
                      C.usererror(['The tolerance: "',char(field),'" must be a positive (non-infinite, non-nan) double. We got: "',class(value),'"'])
                   elseif value > 10
-                     warning(['WARNING: you are setting a SQP convergence tolerance: "',char(field),'" to a value greater than 10. (this is may be a very slack tolarance)'])
+                     % warning(['WARNING: you are setting a SQP convergence tolerance: "',char(field),'" to a value greater than 10. (this is may be a very slack tolarance)'])
                   end
                case "QP_solver"
                   QP_solvers = ["quadprog_AS","quadprog_IP","quadprog_TR"];
@@ -3871,17 +3944,18 @@ Relevant options:
             options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             options.mark_samples (1,1) logical = true;
             options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
-            options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
+            options.opacity (1,1) double {mustBeInRange(options.opacity,0,1,"exclude-lower")} = 0.7;
             options.legend (1,:) string
             options.linestyle (1,:) string
-            options.linewidth (1,:) string
+            options.linewidth (1,:) double {mustBeGreaterThan(options.linewidth,0)}
             options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
+            options.Layout (1,1) tiledlayout % use to provide a Layout, within which the axes shall be created.
+            options.tiles  (1,1) struct % provde a struct containing axes in which the plots shall be made.
          end
 
          % create figure object to plot in
          figure_text = [char(C.Name), ' : simulation '];
-         figure(Name=figure_text)
 
          % Prepare title text:
          ID_text = append("ID:",C.ID," - sim-ID(index): ");
@@ -3911,6 +3985,7 @@ Relevant options:
             "simulation",...
             data,...
             title_text,...
+            figure_text,...
             options);
 
 
@@ -3923,7 +3998,7 @@ Relevant options:
             C
 
             % unique options:
-            options.optimization_number (1,:) double {mustBeInteger,mustBePositive} = length(C.archive.optimizations);
+            options.optimization_number (1,:) double {mustBeInteger,mustBePositive}
 
             % common options:
             options.tiledlayout_varargin (1,:) cell
@@ -3934,21 +4009,24 @@ Relevant options:
             options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             options.mark_samples (1,1) logical = true;
             options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
-            options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
+            options.opacity (1,1) double {mustBeInRange(options.opacity,0,1,"exclude-lower")} = 0.7;
             options.legend (1,:) string
             options.linestyle (1,:) string
-            options.linewidth (1,:) string
+            options.linewidth (1,:) double {mustBeGreaterThan(options.linewidth,0)}
             options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
+            options.Layout (1,1) tiledlayout % use to provide a Layout, within which the axes shall be created.
+            options.tiles  (1,1) struct % provde a struct containing axes in which the plots shall be mad
 
             options.optimizations (1,:) cell % you may manually provide a cell array of "optimizations" structs. If not provided, the "C.archive.optimizations" cell array is used.
+
+
          end
  
 
 
          % create figure object to plot in
          figure_text = [char(C.Name), ' : optimization'];
-         figure(Name=figure_text)
 
          % Prepare title text:
          ID_text = append("ID:",C.ID," - opt-ID(index): ");
@@ -3964,16 +4042,20 @@ Relevant options:
             options.optimizations = C.archive.optimizations;
          end
 
+         % If not specified, plot the last problem in the cell array
+         if ~isfield(options,'optimization_number')
+            options.optimization_number = length(C.archive.optimizations);
+         end
+
          for i = options.optimization_number
-            ID_text = append(ID_text," / ",C.archive.optimizations{i}.ID,"(",string(i),")");
-            solver_text = append(solver_text," / ",C.archive.optimizations{i}.solver,"(",string(C.archive.optimizations{i}.n_iterations),"/",sec2str(C.archive.optimizations{i}.solve_time.total),")");
-            integr_text = append(integr_text," / ",C.archive.optimizations{i}.integrator.integrator,"(",string(C.archive.optimizations{i}.integrator.order),"/",string(C.archive.optimizations{i}.integrator.n_increments),")"); 
-            return_status = strrep(C.archive.optimizations{i}.return_status,'_','\_');
+            ID_text = append(ID_text," / ",options.optimizations{i}.ID,"(",string(i),")");
+            solver_text = append(solver_text," / ",options.optimizations{i}.solver,"(",string(options.optimizations{i}.n_iterations),"/",sec2str(options.optimizations{i}.solve_time.total),")");
+            integr_text = append(integr_text," / ",options.optimizations{i}.integrator.integrator,"(",string(options.optimizations{i}.integrator.order),"/",string(options.optimizations{i}.integrator.n_increments),")"); 
+            return_status = strrep(options.optimizations{i}.return_status,'_','\_');
             return_text = append(return_text," / ",return_status);
 
-            % data(i) = C.archive.optimizations{i}.sim;
-            data(i) = C.archive.optimizations{i}.decision.str;
-            data(i).time = C.archive.optimizations{i}.time;
+            data(i) = options.optimizations{i}.decision.str;
+            data(i).time = options.optimizations{i}.time;
          end
 
          title_text = [ID_text ; solver_text; integr_text; return_text];
@@ -3986,6 +4068,7 @@ Relevant options:
             "optimization",...
             data,...
             title_text,...
+            figure_text,...
             options);
 
 
@@ -3995,7 +4078,7 @@ Relevant options:
          arguments
             C
 
-            options.optimization_number (1,:) double {mustBeInteger,mustBePositive} = length(C.archive.optimizations);
+            options.optimization_number (1,:) double {mustBeInteger,mustBePositive}
 
             options.tiledlayout_varargin (1,:) cell
             options.gridstyle (1,1) string {mustBeMember(options.gridstyle,["flow","vertical","horizontal"])} = "flow";
@@ -4004,17 +4087,20 @@ Relevant options:
             options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             options.mark_samples (1,1) logical = true;
             options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
-            options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
+            options.opacity (1,1) double {mustBeInRange(options.opacity,0,1,"exclude-lower")} = 0.7;
             options.legend (1,:) string
             options.linestyle (1,:) string
-            options.linewidth (1,:) string
+            options.linewidth (1,:) double {mustBeGreaterThan(options.linewidth,0)}
             options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
+            options.Layout (1,1) tiledlayout % use to provide a Layout, within which the axes shall be created.
+            options.tiles  (1,1) struct % provde a struct containing axes in which the plots shall be mad
+
+            options.optimizations (1,:) cell % you may manually provide a cell array of "optimizations" structs. If not provided, the "C.archive.optimizations" cell array is used.
          end
 
          % create figure object to plot in
          figure_text = [char(C.Name), ' : constraints'];
-         figure(Name=figure_text)
 
          % Prepare title text:
          ID_text = append("ID:",C.ID," - opt-ID(index): ");
@@ -4025,15 +4111,25 @@ Relevant options:
          % Prepare data
          data = dictionary;
 
+         % Prepare the correct optimizations struct:
+         if ~isfield(options,'optimizations')
+            options.optimizations = C.archive.optimizations;
+         end
+
+         % If not specified, plot the last problem in the cell array
+         if ~isfield(optoins,'optimization_number')
+            options.optimization_number = length(C.archive.optimizations);
+         end
+
          for i = options.optimization_number
-            ID_text = append(ID_text," / ",C.archive.optimizations{i}.ID,"(",string(i),")");
-            solver_text = append(solver_text," / ",C.archive.optimizations{i}.solver,"(",string(C.archive.optimizations{i}.n_iterations),"/",sec2str(C.archive.optimizations{i}.solve_time.total),")");
-            integr_text = append(integr_text," / ",C.archive.optimizations{i}.integrator.integrator,"(",string(C.archive.optimizations{i}.integrator.order),"/",string(C.archive.optimizations{i}.integrator.n_increments),")"); 
-            return_status = strrep(C.archive.optimizations{i}.return_status,'_','\_');
+            ID_text = append(ID_text," / ",options.optimizations{i}.ID,"(",string(i),")");
+            solver_text = append(solver_text," / ",options.optimizations{i}.solver,"(",string(options.optimizations{i}.n_iterations),"/",sec2str(options.optimizations{i}.solve_time.total),")");
+            integr_text = append(integr_text," / ",options.optimizations{i}.integrator.integrator,"(",string(options.optimizations{i}.integrator.order),"/",string(options.optimizations{i}.integrator.n_increments),")"); 
+            return_status = strrep(options.optimizations{i}.return_status,'_','\_');
             return_text = append(return_text," / ",return_status);
 
-            data(i) = C.archive.optimizations{i}.decision.str;
-            data(i).time = C.archive.optimizations{i}.time;
+            data(i) = options.optimizations{i}.decision.str;
+            data(i).time = options.optimizations{i}.time;
          end
 
          title_text = [ID_text ; solver_text; integr_text; return_text];
@@ -4046,7 +4142,64 @@ Relevant options:
             "constraints",...
             data,...
             title_text,...
+            figure_text,...
             options);
+
+      end
+   
+      function [tiles,Layout] = display_trajectory(C,trajecotry,times,options)
+         arguments
+            C
+
+            trajecotry (1,1) structor
+            times (1,:) double
+
+            % common options:
+            options.tiledlayout_varargin (1,:) cell
+            options.gridstyle (1,1) string {mustBeMember(options.gridstyle,["flow","vertical","horizontal"])} = "flow";
+            options.state (1,:) string
+            options.algeb (1,:) string
+            options.input (1,:) string
+            options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
+            options.mark_samples (1,1) logical = true;
+            options.multiplot (1,1) string {mustBeMember(options.multiplot,["separate","ontop"])} = "ontop";
+            options.opacity (1,1) double {mustBeInRange(options.opacity,0,1,"exclude-lower")} = 0.7;
+            options.legend (1,1) string
+            options.linestyle (1,1) string
+            options.linewidth (1,1) double {mustBeGreaterThan(options.linewidth,0)}
+            options.colors (1,1) % either a cell array of bgr triplets or string array for "GetCOlorCode"
+            options.color_match (1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
+            options.Layout (1,1) tiledlayout % use to provide a Layout, within which the axes shall be created.
+            options.tiles  (1,1) struct % provde a struct containing axes in which the plots shall be mad
+
+            options.LayoutTitle (1,1) string % give a title to the tiledLayout
+         end
+ 
+
+         % create figure object to plot in
+         figure_text = [char(C.Name), ' : trajectory'];
+
+         % Prepare data
+         data = dictionary;
+         data(1) = trajecotry.str;
+         data(1).time = times;
+
+         if isfield(options,'LayoutTitle')
+            title_text = options.LayoutTitle;
+         else
+            title_text = [];
+         end
+
+         % Number:
+         options.display_number = 1;
+
+         [tiles,Layout] = display_trajectories(C,...
+            "trajectory",...
+            data,...
+            title_text,...
+            figure_text,...
+            options);
+
 
       end
    end
@@ -4054,14 +4207,14 @@ Relevant options:
 
    %%% Internal display methods
    methods(Access = private)
-      function [tiles,Layout] = display_trajectories(C,display_type,data,title_text,options)
+      function [tiles,Layout] = display_trajectories(C,display_type,data,title_text,figure_text,options)
          arguments
             C
             % unique:
-            display_type (1,1) string {mustBeMember(display_type,["simulation","optimization","constraints"])}
+            display_type (1,1) string {mustBeMember(display_type,["simulation","optimization","constraints","trajectory"])}
             data (1,1) dictionary
             title_text string
-
+            figure_text (1,1) string
             options
 
             % Common optoins:
@@ -4074,23 +4227,54 @@ Relevant options:
             % (options.inequality (1,:) string)
             % options.time_order (1,1) string {mustBeMember(options.time_order,["seconds","minutes","hours","days","weeks","months","years"])} = "seconds";
             % options.mark_samples (1,1) logical = true;
-            %options.transparency (1,1) double {mustBeInRange(options.transparency,0,1,"exclude-lower")} = 0.7;
+            %options.opacity (1,1) double {mustBeInRange(options.opacity,0,1,"exclude-lower")} = 0.7;
             % options.legend (1,:) string
             % options.linestyle (1,:) string
-            % options.linewidth (1,:) string
+            % options.linewidth (1,:) double {mustBeGreaterThan(options.linewidth,0)}
             % options.colors (1,:) % either a cell array of bgr triplets or string array for "GetCOlorCode"
             % options.color_match(1,1) string {mustBeMember(options.color_match,["plot","solution"])} = "plot";
+
+            % options.optimizations (1,:) cell % you may manually provide a cell array of "optimizations" structs. If not provided, the "C.archive.optimizations" cell array is used.
          end
 
+         if ~isfield(options,'Layout') && ~isfield(options,'tiles')
+            % create figure to hold Layout:
+            figure(Name=figure_text)
+         end
+         
 
-         % Tiled layout to structure the figure
-         if isfield(options,'tiledlayout_varargin')
-            tiled_varargin = options.tiledlayout_varargin;
+
+         % hold all axes handles in a struct, and pass as output so that
+         % one can edit them outside this function.
+         if isfield(options,'tiles')
+            tiles = options.tiles;
+            if isfield(options,'Layout')
+               warning('Ignoring the "Layout" argument, since "tiles" was also privided, which has precedence.')
+            end
+            Layout = [];
          else
-            tiled_varargin = {options.gridstyle,"TileSpacing","compact","Padding","compact"};
+            tiles = struct([]);
+
+            % Create Layout if necessary
+            if isfield(options,'Layout')
+               Layout = options.Layout;
+            else
+               % Tiled layout to structure the figure
+               if isfield(options,'tiledlayout_varargin')
+                  tiled_varargin = options.tiledlayout_varargin;
+               else
+                  tiled_varargin = {options.gridstyle,"TileSpacing","compact","Padding","compact"};
+               end
+               Layout = tiledlayout(tiled_varargin{:});
+               title(Layout,title_text,'FontSize',11,'FontWeight','bold')
+            end
          end
-         Layout = tiledlayout(tiled_varargin{:});
-         title(Layout,title_text,'FontSize',11,'FontWeight','bold')
+
+
+
+
+
+
 
 
          Types = [];
@@ -4103,6 +4287,9 @@ Relevant options:
             if isempty(Types)
                Types = ["equality", "inequality"];
             end
+         elseif display_type == "trajectory"
+            Types = string(fieldnames(data(1)))';
+            Types(Types == "time") = [];
          else
             for type = C.var_types_notpar
                if isfield(options,type)
@@ -4144,10 +4331,10 @@ Relevant options:
             disp_names = string(options.display_number);
          end
 
+         
 
-         % hold all axes handles in a struct, and pass as output so that
-         % one can edit them outside this function.
-         tiles = struct([]);
+
+         
 
          % Plot:
          L = length(options.display_number);
@@ -4155,8 +4342,8 @@ Relevant options:
             for type = Types
                if ~isfield(options,type) || (isscalar(options.(type)) && options.(type) == "all")
                   if display_type == "constraints"
-                     names = [string(fieldnames(C.archive.optimizations{options.display_number(i)}.constraints.equality))',...
-                              string(fieldnames(C.archive.optimizations{options.display_number(i)}.constraints.inequality))']; %#ok<*AGROW>
+                     names = [string(fieldnames(options.optimizations{options.display_number(i)}.constraints.equality))',...
+                              string(fieldnames(options.optimizations{options.display_number(i)}.constraints.inequality))']; %#ok<*AGROW>
                   else
                      names = C.names.code.(type)';
                   end
@@ -4165,46 +4352,39 @@ Relevant options:
                end
 
                for name = names
-                  if i == 1 || options.multiplot == "separate"% on first pass, create new axes for every plot:
-                     tiles(i).(type).(name) = nexttile(Layout);
-                     tile = tiles(i).(type).(name);
-                     hold(tile,"on");
-                     grid(tile,"on");
 
-                     if display_type == "constraints"
-                        ylabel(tile,strrep(name,"_","\_"));
-                     else
-                        ylabel(tile,C.plotting.display_names.(type).(name),Interpreter="latex");
-                     end
-                     
-                     if L > 1
-                        legend(tile)
-                     end
 
-                     if type == "state"
-                        tile.Color = [0.99, 1, 0.96];
-                     elseif type == "algeb"
-                        tile.Color = [1, 1, 0.96];
-                     elseif type == "input"
-                        tile.Color = [1, 0.98, 0.99];
-                     elseif type == "equality"
-                        tile.Color = [0.97, 0.97, 0.99];
-                     elseif type == "inequality"
-                        tile.Color = [1, 0.95, 0.95];
+                  % Manage tiles:
+                  if isfield(options,'tiles')
+                     ii = mod(i-1,length(tiles))+1;
+                     if ~isfield(tiles(ii),type) || ~isfield(tiles(ii).(type),name)
+                        add_tile(ii)
                      end
-
-                  elseif options.multiplot == "ontop" % for the remaining passes, reuse old axes:
-                     tile = tiles(1).(type).(name);
+                     tile = tiles(ii).(type).(name);
                   else
-                     error('DEVELOPER ERROR: not "ontop" nor "separate"... ')
+                     % Create tile:
+                     if i == 1 || options.multiplot == "separate"% on first pass, create new axes for every plot:
+
+                        add_tile(i)
+
+                     elseif options.multiplot == "ontop" % for the remaining passes, reuse old axes:
+                        tile = tiles(1).(type).(name);
+                     else
+                        error('DEVELOPER ERROR: not "ontop" nor "separate"... ')
+                     end
                   end
-                  
+
+
+                  % Time:
+                  time = time_scaler(data(options.display_number(i)).time);
+
+
                   % Prepare data:
                   if display_type == "constraints"
                      Data = data(options.display_number(i));
                      D.algeb = struct;
                      D.input = struct;
-                     D.param = C.archive.optimizations{options.display_number(i)}.parameters.str;
+                     D.param = options.optimizations{options.display_number(i)}.parameters.str;
 
                      variable = nan(1,length(Data.time));
                      for j = 1:(length(Data.time)-1)
@@ -4213,7 +4393,7 @@ Relevant options:
                               D.(variable_type).(C.names.code.(variable_type)(jj)) = Data.(variable_type)(jj,j);
                            end
                         end
-                        variable(j) = C.archive.optimizations{options.display_number(i)}.constraints.(type).(name)(D.state,D.algeb,D.input,D.param);
+                        variable(j) = options.optimizations{options.display_number(i)}.constraints.(type).(name)(D.state,D.algeb,D.input,D.param);
                      end
                   else
                      if type == "input" && display_type == "simulation"
@@ -4222,13 +4402,16 @@ Relevant options:
                         type_2 = type;
                      end
                      variable = data(options.display_number(i)).(type_2)(C.names.ind.(type).(name),:);
-                     if type == "input" && display_type ~= "simulation"
+                     if type == "input" && display_type ~= "simulation" && size(variable,2)+1 == length(time)
                         variable(:,end+1) = nan; % make inputs the same length as the time vector
                      end
                   end
 
-                  % Time:
-                  time = time_scaler(data(options.display_number(i)).time);
+
+
+
+
+
 
                   % Manage color
                   if isfield(options,'colors')
@@ -4261,9 +4444,11 @@ Relevant options:
                      end
                   end
 
+
+
                   % Menage linestyle (if externally provided linestyle, it is on a solution basis, if not, the linestyle is dictated by the variable preference)
                   if isfield(options,'linestyle')
-                     linestyle = options.linestyle(i);
+                     linestyle = options.linestyle(mod(i-1,length(options.linestyle))+1);
                   else
                      if display_type == "constraints"
                         linestyle = '-';
@@ -4271,6 +4456,8 @@ Relevant options:
                         linestyle = C.plotting.linestyle.(type).(name);
                      end
                   end
+
+
 
                   % Menage linewidth (if externally provided linewidth, it is on a solution basis, if not, the linewidth is dictated by the variable preference)
                   if isfield(options,'linewidth')
@@ -4284,15 +4471,17 @@ Relevant options:
                   end
                   
 
+
                   if display_type == "constraints"
                      plot(tile,[0 time(end)],[0 0],Color=GetColorCode('e'),LineStyle='--',HandleVisibility='off')
                   end
 
 
+
                   plot(tile,...
                        time,...
                        variable,...
-                       Color=[color options.transparency],...
+                       Color=[color options.opacity],...
                        LineStyle=linestyle,...
                        LineWidth=linewidth,...
                        DisplayName=disp_names(i));
@@ -4318,6 +4507,36 @@ Relevant options:
          end
 
          xlabel(['Time [',char(options.time_order),']'])
+
+
+         function add_tile(ii)
+            tiles(ii).(type).(name) = nexttile(Layout);
+            tile = tiles(ii).(type).(name);
+            hold(tile,"on");
+            grid(tile,"on");
+
+            if display_type == "constraints"
+               ylabel(tile,strrep(name,"_","\_"));
+            else
+               ylabel(tile,C.plotting.display_names.(type).(name),Interpreter="latex");
+            end
+
+            if L > 1
+               legend(tile)
+            end
+
+            if type == "state"
+               tile.Color = [0.99, 1, 0.96];
+            elseif type == "algeb"
+               tile.Color = [1, 1, 0.96];
+            elseif type == "input"
+               tile.Color = [1, 0.98, 0.99];
+            elseif type == "equality"
+               tile.Color = [0.97, 0.97, 0.99];
+            elseif type == "inequality"
+               tile.Color = [1, 0.95, 0.95];
+            end
+         end
       end
 
    end
