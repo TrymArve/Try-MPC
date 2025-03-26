@@ -1,5 +1,4 @@
-%% Cart-Pendulum Tutorial 2 - Building dynamic optimization problems and optimizing
-
+%% Cart-Pendulum Tutorial 3 - Simulating NMPC controller
 
 %{
 This tutorial is meant to be run one section at a time; (ctrl + enter) or
@@ -82,7 +81,7 @@ C.set_T(7); % predict a specific number of seconds into the future
 
 
 %% Let's inspect the solution:
-C.clear_archive; close all
+% C.clear_archive; close all
 C.set_SQP_settings("tolerance_lagrangian",1000)
 C.solve("sqp",max_iterations=10);
 C.display_optimization;
@@ -414,7 +413,7 @@ C.clear_problem % clear the current problem
 C.def_objective(quadratic=["Q","R","dR","Q_terminal"])    % define objective
 C.def_integrator("ERK4","n_increments",2)                 % define integrator
 C.def_stage_constraints("upper_bounds","ux")              % define stage constraints
-C.def_horizon(10)                                          % define horizon (also build DOP on that horizon length)
+C.def_horizon(10)                                         % define horizon (also build DOP on that horizon length)
 
 C.set_T(3); % choose a short prediction horizon
 

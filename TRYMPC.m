@@ -22,7 +22,7 @@ classdef TRYMPC < handle
       reference (1,1) struct % contains field with a reference "function_handle" for each variable type.
 
       % "SQP_settings" contains the settigns of the SQP algorithm / QP subproblems:
-      SQP_settings (1,1) struct = struct("tolerance_lagrangian",5,...
+      SQP_settings (1,1) struct = struct("tolerance_lagrangian",50,...
                                          "tolerance_equality",10^-6,...
                                          "tolerance_inequality",10^-6,...
                                          "QP_solver","quadprog_IP",...
@@ -37,7 +37,9 @@ classdef TRYMPC < handle
 
       archive (1,1) struct = struct('optimizations',[],'simulations',[]) % contains simulation results (for all simulations that are performed)
    end
-
+   properties(Dependent)
+      opt % optimal solution (the last one solved: opt = C.archive.optimizations{end} )
+   end
 
 
 
@@ -865,6 +867,8 @@ classdef TRYMPC < handle
          Arg = C.cas.var;
          infields = fieldnames(Arg);
 
+
+         %%% Starts here:
          if isfield(options,'equality')
             equality = options.equality;
             for name = string(fieldnames(equality))'
@@ -897,7 +901,7 @@ classdef TRYMPC < handle
             end
          end
 
-         % Form lower bounds:
+         % Form bounds:
          expr = [];
          for bound_type = ["lower", "upper"]
             if isfield(options,[char(bound_type),'_bounds'])
@@ -1828,7 +1832,7 @@ classdef TRYMPC < handle
             % (constant controller)
             options.controller_constant (:,1) double {mustBeReal}
             % (custom controller)
-            options.controller_custom (1,1) function_handle
+            options.controller_custom (1,1) function_handle % on form: u = @(C,t,x) (...)
             
             % nlpsol (ipopt) options
             options.ipopt_nlpsol_options (1,1) struct = struct('print_time',0);
@@ -1913,6 +1917,7 @@ classdef TRYMPC < handle
                C.internal_mpc.internal_controller = true;
                C.internal_mpc.solve_time.total = 0;
                C.internal_mpc.archive_time = 0;
+               
 
 
                switch options.controller_type
@@ -1941,18 +1946,23 @@ classdef TRYMPC < handle
                   case "NMPC_sqp"
                   case "asNMPC" 
                   case "RTI" 
+                     C.internal_mpc.rti_type = true;
                   case "aRTI" 
+                     C.internal_mpc.rti_type = true;
                   case "aRTIshp"
+                     C.internal_mpc.rti_type = true;
                end
                C.simulation.controller_handle = @(C,t,x) C.(['controller_',char(options.controller_type)])(t,x);
          end
 
-
+         % Just create this this too:
+         C.internal_mpc.halt = false;
 
          %%%%%%% INITIALIZE SIMULATION:
          C.internal_sim.simulator_handle = str2func(C.simulation.simulator);
          C.internal_sim.time = C.simulation.start_time;
          C.internal_sim.state = C.simulation.initial_state;
+         C.internal_sim.u_current = 0;
          Arg = struct;
          arg_param = @() setfield(Arg,'param',C.parameters.vec);
          arg_state = @(state) setfield(arg_param(),'state',state);
@@ -2105,16 +2115,19 @@ classdef TRYMPC < handle
 
             % update live time and state:
             C.internal_sim.time = C.internal_sim.t_sim(end);
-            C.internal_mpc.time = (0:C.horizon.N).*C.horizon.Dt + C.internal_sim.time;
             C.internal_sim.state = C.internal_sim.x_sim(end,:)';
 
+            % update mpc struct too:
+            if C.flag_horizon_defied
+               C.internal_mpc.time = (0:C.horizon.N).*C.horizon.Dt + C.internal_sim.time;
+            end
 
-            if options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
+            if C.internal_mpc.halt || options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
                break;
             end
          end
 
-         if options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
+         if C.internal_mpc.halt || options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
             disp(' ')
             disp('... Halting Condition met. ')
          else
@@ -2297,7 +2310,16 @@ classdef TRYMPC < handle
       end
 
       function u = controller_RTI(C,t,state)
-         
+         C.internal_mpc.initial_state = state;
+
+         C.call_rti
+         u =  full(C.internal_mpc.decision(C.cas.problem.decision.ind.input(:,1)));
+ 
+         if ~C.speed
+            tic;
+            C.save_archive_optimization("simulation",C.internal_mpc.solution,"sqp"  ,C.SQP_info.return_status,C.SQP_info.success_flag,C.SQP_info.n_iterations)
+            C.internal_mpc.archive_time = toc;
+         end
       end
 
       function u = controller_aRTI(C,t,state)
@@ -2595,9 +2617,13 @@ problems, so maybe I will do this for the reference too at some point.
       function call_sqp(C)
 
          C.initialize_sqp
-         solve_time = tic;
          C.internal_sqp
-         C.internal_mpc.solve_time.total = toc(solve_time);
+
+         % compute total time
+         C.internal_mpc.solve_time.total = 0;
+         for name = string(fieldnames(C.SQP_info.solve_time))'
+            C.internal_mpc.solve_time.total = C.internal_mpc.solve_time.total + sum(C.SQP_info.solve_time.(name),"all");
+         end
 
          % Extract Solution to use for next initial guess
          C.internal_mpc.solution.decision  = C.cas.problem.decision.retrieve(C.internal_mpc.decision);
@@ -2619,6 +2645,7 @@ problems, so maybe I will do this for the reference too at some point.
          C.SQP_info.return_status = [];
          C.SQP_info.success_flag  = 0;
          C.SQP_info.n_iterations  = [];
+         C.SQP_info.halt = false;
          % C.SQP_info.decision      = [];
          C.SQP_info.ref = C.internal_mpc.ref;
          C.SQP_info.primal_iterations = C.internal_mpc.decision;
@@ -2630,6 +2657,14 @@ problems, so maybe I will do this for the reference too at some point.
          C.SQP_info.convergence.equality = [];
          C.SQP_info.convergence.inequality = [];
          
+
+         C.SQP_info.solve_time.HL = [];
+         C.SQP_info.solve_time.HL_posdef = [];
+         C.SQP_info.solve_time.Jf = [];
+         C.SQP_info.solve_time.eq = [];
+         C.SQP_info.solve_time.in = [];
+         C.SQP_info.solve_time.QP = [];
+         C.SQP_info.solve_time.take_step = [];
 
       end
       
@@ -2671,6 +2706,9 @@ problems, so maybe I will do this for the reference too at some point.
                if C.SQP_converged
                   C.SQP_info.success_flag = 1;
                   C.SQP_info.return_status = "Solve Successful.";
+                  break;
+               elseif C.SQP_info.halt
+                  C.SQP_info.success_flag = 0;
                   break;
                else % Monitor progress:
                   if best_staionarity <= C.SQP_info.convergence.stationarity(end)
@@ -2717,6 +2755,42 @@ problems, so maybe I will do this for the reference too at some point.
 
       end
 
+
+      %%%%%%%%%%%%%%% RTI:
+      function call_rti(C)
+
+         C.initialize_sqp % just use the same one as for SQP
+         C.internal_rti;
+
+         % compute total time
+         C.internal_mpc.solve_time.total = 0;
+         for name = string(fieldnames(C.SQP_info.solve_time))'
+            C.internal_mpc.solve_time.total = C.internal_mpc.solve_time.total + sum(C.SQP_info.solve_time.(name),"all");
+         end
+
+         % Extract Solution to use for next initial guess
+         C.internal_mpc.solution.decision  = C.cas.problem.decision.retrieve(C.internal_mpc.decision);
+         primaldual = C.cas.problem.primaldual.retrieve([C.internal_mpc.decision; C.internal_mpc.lambda; C.internal_mpc.mu]);
+         C.internal_mpc.solution.dual_eq = structor.subvec(C.cas.problem.primaldual,primaldual.str.lambda);
+         if C.flag_has_inequality
+            C.internal_mpc.solution.dual_in = structor.subvec(C.cas.problem.primaldual,primaldual.str.mu);
+         end
+      end
+
+      function internal_rti(C)
+         % Find Newton Step (Dx, lambda_next, mu_next):
+         C.SQP_Newton_Step
+
+         % Linesearch:
+         C.SQP_take_step
+
+         % Log iteration:
+         C.SQP_log
+
+
+         C.SQP_info.n_iterations = 1;
+         C.SQP_info.return_status = append("flag: ",string(C.internal_mpc.QP_sol.EXITFLAG));
+      end
    end
 
 
@@ -2741,52 +2815,72 @@ problems, so maybe I will do this for the reference too at some point.
          C.internal_mpc.Arg_objective.decision = C.internal_mpc.decision;
          C.internal_mpc.Arg_constraints.decision = C.internal_mpc.decision;
 
+
          % Hessian of Lagrangian w.r.t. primal
+         HL_time = tic;         
          HL = sparse(C.cas.problem.Lagrangian.H.F.call(C.internal_mpc.Arg_Lagrangian).out);
-         min_eig = min(eig(HL));
-         if min_eig < 1e-8
-            HL = HL + speye(C.cas.problem.decision.len)*(abs(min_eig)+1e-8); % ensure positive definiteness
-            % dispt('min eig: ',min_eig)
-         end
+         C.SQP_info.solve_time.HL(end+1) = toc(HL_time);
 
-         % Jacobian of objective w.r.t. primal
-         Jf = sparse(C.cas.problem.objective.J.F.call(C.internal_mpc.Arg_objective).out);
-         
-
-
-
-         %%%%%%%%% Equality constraints:
-         % jacboian of equality constraints w.r.t. primal
-         Aeq =  sparse(C.cas.problem.equality.J.F.call(C.internal_mpc.Arg_constraints).out);
-         beq = -sparse(C.cas.problem.equality.F.call(C.internal_mpc.Arg_constraints).out);
-
-
-         %%%%%%%% Inequality constraints:
-         if C.flag_has_inequality
-            % Notice the sigs, due to the form h(x) > 0:
-            Ain = -sparse(C.cas.problem.inequality.J.F.call(C.internal_mpc.Arg_constraints).out);
-            bin =  sparse(C.cas.problem.inequality.F.call(C.internal_mpc.Arg_constraints).out);
-         else
-            Ain = []; bin = [];
-         end
-
-
-
-         %%%%%%%%% Solve QP subproblem:
-         switch C.SQP_settings.QP_solver
-            case {"quadprog_AS","quadprog_IP","quadprog_TR"}
-               switch C.SQP_settings.QP_solver
-                  case "quadprog_AS"
-                     QP_options = C.SQP_settings.quadprog_AS_options;
-                  case "quadprog_IP"
-                     QP_options = C.SQP_settings.quadprog_IP_options;
-                  case "quadprog_TR"
-                     QP_options = C.SQP_settings.quadprog_TR_options;
+         if ~any(isnan(HL),"all")
+            if ~C.internal_mpc.rti_type
+               posdefify_time = tic;
+               min_eig = min(eig(HL));
+               if min_eig < 1e-8
+                  HL = HL + speye(C.cas.problem.decision.len)*(abs(min_eig)+1e-8); % ensure positive definiteness
+                  % dispt('min eig: ',min_eig)
                end
-               [C.internal_mpc.QP_sol.Dz,C.internal_mpc.QP_sol.FVAL,C.internal_mpc.QP_sol.EXITFLAG,C.internal_mpc.QP_sol.OUTPUT,C.internal_mpc.QP_sol.LAMBDA] ...
-                  = quadprog(HL,Jf',Ain,bin,Aeq,beq,[],[],C.internal_mpc.decision,QP_options);
-         end
+               C.SQP_info.solve_time.HL_posdef(end+1) = toc(posdefify_time);
+            end
 
+
+            % Jacobian of objective w.r.t. primal
+            Jf_time = tic;
+            Jf = sparse(C.cas.problem.objective.J.F.call(C.internal_mpc.Arg_objective).out);
+            C.SQP_info.solve_time.Jf(end+1) = toc(Jf_time);
+
+
+
+            %%%%%%%%% Equality constraints:
+            % jacboian of equality constraints w.r.t. primal
+            eq_time = tic;
+            Aeq =  sparse(C.cas.problem.equality.J.F.call(C.internal_mpc.Arg_constraints).out);
+            beq = -sparse(C.cas.problem.equality.F.call(C.internal_mpc.Arg_constraints).out);
+            C.SQP_info.solve_time.eq(end+1) = toc(eq_time);
+
+            %%%%%%%% Inequality constraints:
+            if C.flag_has_inequality
+               % Notice the sigs, due to the form h(x) > 0:
+               in_time = tic;
+               Ain = -sparse(C.cas.problem.inequality.J.F.call(C.internal_mpc.Arg_constraints).out);
+               bin =  sparse(C.cas.problem.inequality.F.call(C.internal_mpc.Arg_constraints).out);
+               C.SQP_info.solve_time.in(end+1) = toc(in_time);
+            else
+               Ain = []; bin = [];
+            end
+
+
+
+            %%%%%%%%% Solve QP subproblem:
+            switch C.SQP_settings.QP_solver
+               case {"quadprog_AS","quadprog_IP","quadprog_TR"}
+                  switch C.SQP_settings.QP_solver
+                     case "quadprog_AS"
+                        QP_options = C.SQP_settings.quadprog_AS_options;
+                     case "quadprog_IP"
+                        QP_options = C.SQP_settings.quadprog_IP_options;
+                     case "quadprog_TR"
+                        QP_options = C.SQP_settings.quadprog_TR_options;
+                  end
+                  QP_time = tic;
+                  [C.internal_mpc.QP_sol.Dz,C.internal_mpc.QP_sol.FVAL,C.internal_mpc.QP_sol.EXITFLAG,C.internal_mpc.QP_sol.OUTPUT,C.internal_mpc.QP_sol.LAMBDA] ...
+                     = quadprog(HL,Jf',Ain,bin,Aeq,beq,[],[],C.internal_mpc.decision,QP_options);
+                  C.SQP_info.solve_time.QP(end+1) = toc(QP_time);
+            end
+         else
+            C.internal_mpc.halt = true;
+            C.SQP_info.halt = true;
+            C.SQP_info.return_status = "Hessian of Lagrangian contains NaN.";
+         end
       end
 
 
@@ -2797,7 +2891,7 @@ problems, so maybe I will do this for the reference too at some point.
          a = 1; % initial step length
 
          % just for ease of writing the code:
-         z  = C.internal_mpc.decision; 
+         z  = C.internal_mpc.decision;
          Dz = C.internal_mpc.QP_sol.Dz;
          lambda      = C.internal_mpc.lambda;
          lambda_next = C.internal_mpc.QP_sol.LAMBDA.eqlin;
@@ -2808,79 +2902,81 @@ problems, so maybe I will do this for the reference too at some point.
             mu      = -inf;
             mu_next = -inf;
          end
-         
-         
 
 
-         % Find step length: (linesearch)
-         switch C.SQP_settings.linesearch_method
-            case "none"
-            case "backtracking" 
-               while 1
-                  % new variables if the current step size is used:
-                  z_new      = z + a*Dz;
-                  lambda_new = (1-a)*lambda + a*lambda_next;
-                  mu_new     = (1-a)*mu + a*mu_next;
+         if ~C.internal_mpc.rti_type % don't do linesearch if you are using rti-type controller
+
+            % Find step length: (linesearch)
+            switch C.SQP_settings.linesearch_method
+               case "none"
+               case "backtracking"
+                  while 1
+                     % new variables if the current step size is used:
+                     z_new      = z + a*Dz;
+                     lambda_new = (1-a)*lambda + a*lambda_next;
+                     mu_new     = (1-a)*mu + a*mu_next;
 
 
-                  % Find multiplier "ny" for merit function: (based on lagrangian multipliers at the candidate next guess, so has to be recomputed every time)
-                  ny = max(abs([lambda_new;mu_new]),[],"all")+1e1; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
+                     % Find multiplier "ny" for merit function: (based on lagrangian multipliers at the candidate next guess, so has to be recomputed every time)
+                     ny = max(abs([lambda_new;mu_new]),[],"all")+1e1; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
 
-                  % Find current merit: (must be recomputed every time because of the updated "ny" muliplier)
-                  current_merit = full(C.merit(z,ny));
-                  % dispt('Current merit:',current_merit)
+                     % Find current merit: (must be recomputed every time because of the updated "ny" muliplier)
+                     current_merit = full(C.merit(z,ny));
+                     % dispt('Current merit:',current_merit)
 
-                  % Find merit after step a*C.Dx:
-                  next_merit = full(C.merit(z_new,ny));
-                  % dispt('Next merit:',next_merit)
+                     % Find merit after step a*C.Dx:
+                     next_merit = full(C.merit(z_new,ny));
+                     % dispt('Next merit:',next_merit)
 
-                  % dispt('Merit decrease:',next_merit-current_merit,'a:',a)
-                  if (next_merit < current_merit) || (a*C.SQP_settings.backtracking_rate < C.SQP_settings.backtracking_min_step_size)
-                     break;
+                     % dispt('Merit decrease:',next_merit-current_merit,'a:',a)
+                     if (next_merit < current_merit) || (a*C.SQP_settings.backtracking_rate < C.SQP_settings.backtracking_min_step_size)
+                        break;
+                     end
+                     a = a*C.SQP_settings.backtracking_rate;
                   end
-                  a = a*C.SQP_settings.backtracking_rate;
-               end
 
-            case "best_of_N"
-               step = nan(2,C.SQP_settings.best_of_N);
-               step(1,:) = (1:C.SQP_settings.best_of_N)/C.SQP_settings.best_of_N;
+               case "best_of_N"
+                  step = nan(2,C.SQP_settings.best_of_N);
+                  step(1,:) = (1:C.SQP_settings.best_of_N)/C.SQP_settings.best_of_N;
 
 
-               for i = 1:C.SQP_settings.best_of_N
-                  
-                  % step length
-                  a = step(1,i);
+                  for i = 1:C.SQP_settings.best_of_N
 
-                  % new variables if the current step size is used:
-                  z_new      = z + a*Dz;
-                  lambda_new = (1-a)*lambda + a*lambda_next;
-                  mu_new     = (1-a)*mu + a*mu_next;
+                     % step length
+                     a = step(1,i);
 
-                  % Find multiplier "ny" for merit function: (based on lagrangian multipliers at the candidate next guess, so has to be recomputed every time)
-                  ny = max(abs([lambda_new;mu_new]),[],"all")+10^-8; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
+                     % new variables if the current step size is used:
+                     z_new      = z + a*Dz;
+                     lambda_new = (1-a)*lambda + a*lambda_next;
+                     mu_new     = (1-a)*mu + a*mu_next;
 
-                  % Find current merit: (must be recomputed every time because of the updated "ny" muliplier)
-                  current_merit = full(C.merit(z,ny));
+                     % Find multiplier "ny" for merit function: (based on lagrangian multipliers at the candidate next guess, so has to be recomputed every time)
+                     ny = max(abs([lambda_new;mu_new]),[],"all")+10^-8; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
 
-                  % Find merit after step a*C.Dx:
-                  next_merit = full(C.merit(z_new,ny));
+                     % Find current merit: (must be recomputed every time because of the updated "ny" muliplier)
+                     current_merit = full(C.merit(z,ny));
 
-                  % record performance of step length:
-                  step(2,i) = next_merit - current_merit;
-               end
+                     % Find merit after step a*C.Dx:
+                     next_merit = full(C.merit(z_new,ny));
 
-               [~,ind] = min(step(2,:));
-               a = step(1,ind);
+                     % record performance of step length:
+                     step(2,i) = next_merit - current_merit;
+                  end
+
+                  [~,ind] = min(step(2,:));
+                  a = step(1,ind);
+            end
+
          end
 
-
-
          % Take Step:
+         step_time = tic;
          C.internal_mpc.decision = C.internal_mpc.decision + a*Dz;
          C.internal_mpc.lambda   = (1-a)*lambda + a*lambda_next;
          if C.flag_has_inequality
             C.internal_mpc.mu       = (1-a)*mu + a*mu_next;
          end
+         C.SQP_info.solve_time.take_step(end+1) = toc(step_time);
 
          % log step size:
          C.SQP_info.step_size(end+1) = a;
@@ -3003,6 +3099,9 @@ Relevant options:
 
          % initial state:
          C.internal_mpc.initial_state = options.initial_state;
+
+         % Not an rti-type by default:
+         C.internal_mpc.rti_type = false;
       end
 
 
@@ -3173,7 +3272,7 @@ Relevant options:
             end
          end
 
-         optimization.parameters     = C.parameters;
+         optimization.parameters     = C.parameters.copy;
          optimization.Dt             = C.horizon.Dt;
          optimization.N              = C.horizon.N;
          optimization.T              = C.horizon.T;
@@ -3190,7 +3289,7 @@ Relevant options:
          if C.flag_has_inequality
             optimization.dual_in     = solution.dual_in;
          end
-         optimization.decision       = solution.decision;
+         optimization.decision       = solution.decision.copy;
          optimization.convergence = C.convergence_measure(optimization);
          optimization.solver_specific = struct;
 
@@ -3206,8 +3305,6 @@ Relevant options:
                optimization.solver_specific.step_size = C.SQP_info.step_size;
                optimization.solver_specific.SQP_settings  = C.SQP_settings;
          end
-
-
 
 
          if type == "optimization"
@@ -3631,6 +3728,10 @@ Relevant options:
             C.(def)(C.restore_cell{index}.(def){:})
          end
          disp('Restoration Complete.')
+      end
+   
+      function opt = get.opt(C)
+         opt = C.archive.optimizations{end};
       end
    end
 
@@ -4340,7 +4441,9 @@ Relevant options:
          L = length(options.display_number);
          for i = 1:L
             for type = Types
-               if ~isfield(options,type) || (isscalar(options.(type)) && options.(type) == "all")
+               if isfield(options,"tiles")
+                  names = string(fieldnames(options.tiles.(type)))';
+               elseif ~isfield(options,type) || (isscalar(options.(type)) && options.(type) == "all")
                   if display_type == "constraints"
                      names = [string(fieldnames(options.optimizations{options.display_number(i)}.constraints.equality))',...
                               string(fieldnames(options.optimizations{options.display_number(i)}.constraints.inequality))']; %#ok<*AGROW>
@@ -4403,6 +4506,9 @@ Relevant options:
                      end
                      variable = data(options.display_number(i)).(type_2)(C.names.ind.(type).(name),:);
                      if type == "input" && display_type ~= "simulation" && size(variable,2)+1 == length(time)
+                        variable(:,end+1) = nan; % make inputs the same length as the time vector
+                     elseif size(variable,2)+1 == length(time)
+                        disp('Increasing input trajecotry length by 1.')
                         variable(:,end+1) = nan; % make inputs the same length as the time vector
                      end
                   end
