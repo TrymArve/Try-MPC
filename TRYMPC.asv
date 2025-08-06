@@ -1821,7 +1821,7 @@ classdef TRYMPC < handle
             options.simulator (1,1) string {mustBeMember(options.simulator,["ode45","ode23","ode113","ode78","ode89","ode15s","ode23s","ode23t","ode23tb","ode15i"])} = "ode45";
             options.ode_options (1,1) struct = odeset('RelTol',10^(-7),'AbsTol',10^(-7));
             options.start_time (1,1) double {mustBeReal} = 0;
-            options.simulation_parameters (:,1) double = C.parameters.vec; % use this to set different parameters for the simulation model than for the optimization model.
+            options.simulation_parameters (1,:) double = C.parameters.vec; % use this to set different parameters for the simulation model than for the optimization model.
 
             % controller settings:
             options.sampling_time (1,1) double {mustBePositive} = inf;
