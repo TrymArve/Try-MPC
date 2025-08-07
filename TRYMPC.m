@@ -144,11 +144,12 @@ classdef TRYMPC < handle
    % Properties that can be adjusted at any time:
    properties
       parameters (:,1) structor = structor("default_mix","separated") % numerical values for parameters, these values are queried whener the parameters are needed, thus chaning the parameters here, instantly changes the parameters of you system.
+      % parameters (:,1) structor = structor("bulk","first-fields-first") % numerical values for parameters, these values are queried whener the parameters are needed, thus chaning the parameters here, instantly changes the parameters of you system.
       quadratic_cost (1,1) struct = struct;
       bounds (1,1) struct = struct; % holds the upper and lower bounds of each individual variable. Ex: "C.bounds.upper.th = 2"
       terminal_bounds (1,1) struct = struct; % holds the upper and lower bounds of each terminal variable. Ex: "C.terminal_bounds.upper.ux = 0.2"
       ref (1,1) struct % shold contain a reference trajectory for states, algebs, and inputs
-      initial_state (1,1) structor = structor;
+      initial_state (1,1) structor = structor; 
 
       plotting (1,1) struct % contains informations about desired grafic settings for the various parameters
    end
