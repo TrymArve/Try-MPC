@@ -1,0 +1,249 @@
+%% Create System:
+
+fresh
+Create_TSEx_Qi_Qm % Define the "TSEx" polymer CSTR reactor model
+
+%% Parameter Values (original):
+C.parameters.str.rhoC_p      = 360;
+C.parameters.str.rhoC_pc     = 966.3;
+C.parameters.str.f_eff       = 0.6;
+C.parameters.str.hA          = 70;
+C.parameters.str.I_f         = 0.5888;      % Don't change
+C.parameters.str.A_d         = 5.59*10^(13);
+C.parameters.str.A_p         = 1.06*10^(7); % Don't change
+C.parameters.str.A_t         = 1.25*10^(9); % Don't change
+C.parameters.str.E_d         = 14897;       % Don't change
+C.parameters.str.E_p         = 3557;
+C.parameters.str.E_t         = 843;
+C.parameters.str.M_f         = 8.6981;
+%C.parameters.str.Q_m         = 0.105;
+C.parameters.str.T_cf        = 295;
+C.parameters.str.T_f         = 330;
+C.parameters.str.V           = 3000;
+C.parameters.str.V_c         = 3312.4;
+C.parameters.str.nDHr        = 16700;      % Don't change
+C.parameters.str.M_m         = 104.14;
+C.parameters.str.gamma       = 0.2;
+C.parameters.str.lambda      = 0.6;
+
+%% Parameter Values (stiff):
+C.parameters.str.rhoC_p      = 360;
+C.parameters.str.rhoC_pc     = 966.3;
+C.parameters.str.f_eff       = 0.6;
+C.parameters.str.hA          = 70;
+C.parameters.str.I_f         = 0.5888;      % Don't change
+C.parameters.str.A_d         = 5.59*10^13; %8*10^16;        % OLD 5.59*10^(13) % Crucial to make stiff !
+C.parameters.str.A_p         = 1.06*10^(7); % Don't change
+C.parameters.str.A_t         = 1.25*10^(9); % Don't change
+C.parameters.str.E_d         = 14897;       % Don't change
+C.parameters.str.E_p         = 4500;        % OLD 3557
+C.parameters.str.E_t         = 843;
+C.parameters.str.M_f         = 8.6981;
+%C.parameters.str.Q_m         = 0.105;
+C.parameters.str.T_cf        = 295;
+C.parameters.str.T_f         = 330;
+C.parameters.str.V           = 1000;              % OLD 3000
+C.parameters.str.V_c         = 500;              % OLD 3312.4
+C.parameters.str.nDHr        = 16700;      % Don't change
+C.parameters.str.M_m         = 104.14;
+C.parameters.str.gamma       = 0.2;
+C.parameters.str.lambda      = 0.6;
+
+
+%% Parameter Error: (difference from optimizatoin model to simulation model)
+param_error = structor;
+param_error.str.rhoC_p      = 1;
+param_error.str.rhoC_pc     = 0.3;
+param_error.str.f_eff       = 0.01;
+param_error.str.hA          = 0.1;
+param_error.str.I_f         = 0.0001;      % Don't change
+param_error.str.A_d         = 1*10^(16);
+param_error.str.A_p         = 1.0*10^(10); % Don't change
+param_error.str.A_t         = 1.0*10^(12); % Don't change
+param_error.str.E_d         = 10;       % Don't change
+param_error.str.E_p         = 1;
+param_error.str.E_t         = 1;
+param_error.str.M_f         = 0.0001;
+%param_error.str.Q_m         = 0.001;
+param_error.str.T_cf        = 1;
+param_error.str.T_f         = 1;
+param_error.str.V           = 3;
+param_error.str.V_c         = 3.4;
+param_error.str.nDHr        = 10;      % Don't change
+param_error.str.M_m         = 0.14;
+param_error.str.gamma       = 0.0;
+param_error.str.lambda      = 0.0;
+
+param_error_scaler = 0e-3*0; %use -5 for super stiff system
+%% Duration 150 hours
+duration = hours(150);
+%% Duration 50 hours
+duration = hours(50);
+%% Duration 20 hours
+duration = hours(20);
+%% Duration 1 hour
+duration = hours(1);
+
+
+%% Steady States
+
+% (stable)
+stable_eq = structor;
+stable_eq.str.x_I    =   0.0540739504609;
+stable_eq.str.x_M    =   2.6652154558722;
+stable_eq.str.x_T    = 330.0009833725174;
+stable_eq.str.x_Tc   = 317.1749828155610;
+stable_eq.str.x_D0   =   0.0004188855374;
+stable_eq.str.x_D1   =  17.3626455882584;
+
+stable_input = structor;
+stable_input.str.Q_c    = 0.0419;
+stable_input.str.Q_i    = 0.0300;
+stable_input.str.Q_m    = 0.105;
+
+% (unstable)
+unstable_eq = structor;
+unstable_eq.str.x_I  =   0.063289699425013;
+unstable_eq.str.x_M  =   2.121424920685393;
+unstable_eq.str.x_T  = 345.0000337734414;
+unstable_eq.str.x_Tc = 326.8782732745260;
+unstable_eq.str.x_D0 =   0.003285841672448;
+unstable_eq.str.x_D1 =  56.770090728413585;
+
+unstable_input = structor;
+unstable_input.str.Q_c    = 0.041180244769836;
+unstable_input.str.Q_i    = 0.040001583018170;
+unstable_input.str.Q_m    = 0.104999313835524;
+
+
+%% Reference (stable)
+C.set_ref("state",stable_eq.vec,"input",stable_input.vec)
+%% Reference (unstable)
+C.set_ref("state",unstable_eq.vec,"input",unstable_input.vec)
+%% Stable Equilibrium as initial condition
+initial_state = stable_eq;
+steady_controller = stable_input;
+%% Unstable Equilibrium as initial condition
+initial_state = unstable_eq;
+steady_controller = unstable_input;
+
+%% Simulate (uncontrolled)
+C.simulate(duration,initial_state.vec,simulator="ode15s",controller_type="constant",controller_constant=steady_controller.vec,simulation_parameters=C.parameters.vec-param_error.vec*param_error_scaler)
+C.display_simulation("time_order","hours",reference=["state","input"]);
+% C.archive.simulations{end}.sim.state(:,end) % use to extract steady state for new parameters.
+
+
+
+%% Create Optimization Problem
+N = 100;
+C.clear_problem
+C.def_objective("quadratic",["Q","R","Q_terminal"]);
+C.def_integrator("Gauss-Legendre (6. order)","n_increments",1);
+% C.def_integrator("collocation","n_increments",1);
+C.def_stage_constraints("lower_bounds",["x_I","x_M","x_T","x_Tc","x_D0","x_D1" "Q_c","Q_i","Q_m"]);
+C.def_horizon(N);
+
+%% Configure:
+
+%%% Objective:
+
+% state:
+Q = structor;
+Q.str.x_I    = 1;
+Q.str.x_M    = 1; 
+Q.str.x_T    = 1;
+Q.str.x_Tc   = 1;
+Q.str.x_D0   = 1;
+Q.str.x_D1   = 1;
+C.quadratic_cost.Q = Q.vec;
+C.quadratic_cost.Q_terminal = Q.vec*100;
+
+% input:
+R = structor;
+R.str.Q_c    = 1;
+R.str.Q_i    = 1;
+R.str.Q_m    = 1;
+C.quadratic_cost.R = R.vec;
+
+%%% Bounds:
+C.bounds.lower.x_I    = 0;
+C.bounds.lower.x_M    = 0; 
+C.bounds.lower.x_T    = 0;
+C.bounds.lower.x_Tc   = 0;
+C.bounds.lower.x_D0   = 0;
+C.bounds.lower.x_D1   = 0;
+C.bounds.lower.Q_c    = 0;
+C.bounds.lower.Q_i    = 0;
+C.bounds.lower.Q_m    = 0;
+
+% Horizon Length:
+C.set_T(hours(30));
+
+
+%% Stable Equilibrium as initial condition
+initial_state = stable_eq;
+%% Unstable Equilibrium as initial condition
+initial_state = unstable_eq;
+
+%% Generate Initial Guess Based on Last Simulation:
+initial_guess.primal = C.sim2guess; % interpolates an initial guess based on the last simulation
+
+%% Open-Loop
+C.solve("ipopt","display_result",true,"initial_state",initial_state.vec,initial_guess_primal=initial_guess.primal.vec);
+C.display_optimization(time_order="hours",reference=["state","input"]);
+
+%% Store as initial guess:
+initial_guess = C.opt2guess;
+% initial_dual_eq = C.archive.optimizations{end}.dual_eq; % cannot do this if the constraints are different
+% initial_dual_in = C.archive.optimizations{end}.dual_in;
+
+%% Open-Loop (with good initial guess)
+C.solve("ipopt","display_result",true,"initial_state",initial_state.vec,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in);
+C.display_optimization(time_order="hours",reference=["state","input"]);
+
+
+%% SIMULATION
+
+%% Stable Equilibrium as initial condition
+initial_state = stable_eq;
+
+%% Simulate NMPC (ipopt)
+dur = hours(5);
+samp_time = minutes(24);
+C.simulate(dur,initial_state.vec,"controller_type","NMPC_ipopt","sampling_time",samp_time,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in,simulation_parameters=C.parameters.vec-param_error.vec*param_error_scaler);
+sim_ipopt = length(C.archive.simulations);
+sim_number = sim_ipopt;
+%% Simulate NMPC (RTI)
+C.set_SQP_settings("max_N_iterations",1,"tolerance_lagrangian",1e10)
+
+dur = hours(5);
+samp_time = minutes(24);
+C.simulate(dur,initial_state.vec,"controller_type","RTI","sampling_time",samp_time,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in,simulation_parameters=C.parameters.vec-param_error.vec*param_error_scaler);
+sim_RTI = length(C.archive.simulations);
+sim_number = sim_RTI;
+
+%% Plot
+tiles = C.display_simulation(simulation_number=sim_number,time_order="hours",reference=["state","input"]);
+
+% And stable reference
+stable = structor;
+stable.str.state = stable_eq.vec.*[1 1];
+stable.str.input = stable_input.vec*[1 1];
+time = C.archive.simulations{sim_number}.start_time + [0 C.archive.simulations{sim_number}.duration];
+C.display_trajectory(stable,time,tiles=tiles,colors="black",linewidth=1.5,linestyle=":",time_order="hours");
+%% Plot predictions along the way:
+C.display_optimization(tiles=tiles,optimizations=C.archive.simulations{sim_number}.optimizations,optimization_number=[1 5 10],time_order="hours",linestyle="--");
+
+%% Extract end state
+end_state_NMPC = C.archive.simulations{sim_number}.sim.state(:,end); % use to extract steady state for new parameters.
+end_input_NMPC = C.archive.simulations{end}.optimizations{end}.decision.str.input(:,end); % use to extract steady input for new parameters.
+%% End state as initial condition
+initial_state = initial_state.retrieve(end_state_NMPC);
+
+%% Simulate (uncontrolled)
+C.simulate(duration,end_state_NMPC,simulator="ode15s",controller_type="constant",controller_constant=end_input_NMPC,simulation_parameters=C.parameters.vec-param_error.vec*param_error_scaler)
+C.display_simulation("time_order","hours",reference=["state","input"]);
+% C.archive.simulations{end}.sim.state(:,end) % use to extract steady state for new parameters.
+
+
+
