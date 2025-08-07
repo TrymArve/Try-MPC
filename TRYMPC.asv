@@ -144,12 +144,12 @@ classdef TRYMPC < handle
    % Properties that can be adjusted at any time:
    properties
       % parameters (:,1) structor = structor("default_mix","separated") % numerical values for parameters, these values are queried whener the parameters are needed, thus chaning the parameters here, instantly changes the parameters of you system.
-      parameters (:,1) structor = structor("bulk","first-fields-first") % numerical values for parameters, these values are queried whener the parameters are needed, thus chaning the parameters here, instantly changes the parameters of you system.
+      parameters (:,1) structor2 = structor2("bulk","first-fields-first") % numerical values for parameters, these values are queried whener the parameters are needed, thus chaning the parameters here, instantly changes the parameters of you system.
       quadratic_cost (1,1) struct = struct;
       bounds (1,1) struct = struct; % holds the upper and lower bounds of each individual variable. Ex: "C.bounds.upper.th = 2"
       terminal_bounds (1,1) struct = struct; % holds the upper and lower bounds of each terminal variable. Ex: "C.terminal_bounds.upper.ux = 0.2"
       ref (1,1) struct % shold contain a reference trajectory for states, algebs, and inputs
-      initial_state (1,1) structor = structor; 
+      initial_state (1,1) structor2 = structor2; 
 
       plotting (1,1) struct % contains informations about desired grafic settings for the various parameters
    end
@@ -1107,7 +1107,7 @@ classdef TRYMPC < handle
          end
 
          %%%%%% Generate all decision variables on the horizon:
-         C.cas.horizon.decision = structor("default_mix","TRYMPC_horizon");
+         C.cas.horizon.decision = structor2("default_mix","TRYMPC_horizon");
          for var_type = C.var_types
             if var_type ~= "param"
                C.cas.horizon.decision.str.(var_type) = [];
@@ -1150,9 +1150,9 @@ classdef TRYMPC < handle
          %%%%%%%%%%% CONSTRAINTS:
 
          % Prepare a structor to contain all constraints:
-         C.cas.horizon.constraints.equality = structor("default_mix","separated");
+         C.cas.horizon.constraints.equality = structor2("default_mix","separated");
          if C.flag_has_inequality
-            C.cas.horizon.constraints.inequality = structor("default_mix","separated");
+            C.cas.horizon.constraints.inequality = structor2("default_mix","separated");
          end
 
          
@@ -1205,7 +1205,7 @@ classdef TRYMPC < handle
             end
             if C.integrator.has_aux
                % Arg.aux = C.cas.horizon.decision.subvec(C.cas.horizon.decision.str.aux.(['stage_',num2str(k-1)]),"separated");
-               Arg.aux = structor.subvec(C.cas.horizon.decision,C.cas.horizon.decision.str.aux.(['stage_',num2str(k-1)]),"separated");
+               Arg.aux = structor2.subvec(C.cas.horizon.decision,C.cas.horizon.decision.str.aux.(['stage_',num2str(k-1)]),"separated");
             end
 
             % Auxiliary Integration constraints: (collocation constraints, IRK, ...)
@@ -1322,7 +1322,7 @@ classdef TRYMPC < handle
          samp = length(b); % the number of sample points of the RK scheme (a.k.a. "stages", but that can be confused with stages as in each discrete time point on the prediction horizon)
 
          % First loop over and create relevant variables:
-         C.cas.integrator.aux.var = structor;
+         C.cas.integrator.aux.var = structor2;
          for inc = 1:C.integrator.n_increments
             for samp = 1:samp
                C.cas.integrator.aux.var.str.(['f_inc_',num2str(inc)]).(['samp',num2str(samp)]) = casadi.SX.sym(['RK_f_inc',num2str(inc),'_samp',num2str(samp)],[C.dim.state,1]);
@@ -1332,7 +1332,7 @@ classdef TRYMPC < handle
          % Prepare variables to simplify creation of integrator:
          in_vars = C.cas.var;
          next_state = C.cas.var.state;
-         C.cas.integrator.aux.expr = structor;
+         C.cas.integrator.aux.expr = structor2;
          
          % Integrate system using RK method described by Butcher Tableau:
          for inc = 1:C.integrator.n_increments
@@ -1344,7 +1344,7 @@ classdef TRYMPC < handle
                C.cas.integrator.aux.expr.str.(['RK_f_expr_inc',num2str(inc),'_samp',num2str(samp)]) = C.cas.integrator.aux.var.str.(['f_inc_',num2str(inc)]).(['samp',num2str(a)]) - C.cas.dynamics.F.call(in_vars).out;
             end
 
-            next_state = next_state + (reshape(structor.subvec(C.cas.integrator.aux.var,C.cas.integrator.aux.var.str.(['f_inc_',num2str(inc)])),C.dim.state,samp)*b) .* (C.cas.integrator.Dt/C.integrator.n_increments);
+            next_state = next_state + (reshape(structor2.subvec(C.cas.integrator.aux.var,C.cas.integrator.aux.var.str.(['f_inc_',num2str(inc)])),C.dim.state,samp)*b) .* (C.cas.integrator.Dt/C.integrator.n_increments);
          end
 
          % Save expression for next state based:
@@ -1362,7 +1362,7 @@ classdef TRYMPC < handle
          C.Make_Collocation_Polynomial_Coefficients
 
          % Create symbolic variables
-         C.cas.integrator.aux.var = structor;
+         C.cas.integrator.aux.var = structor2;
          for inc = 1:C.integrator.n_increments
             for c = 1:C.integrator.collocation.d
                C.cas.integrator.aux.var.str.(['increment_',num2str(inc)]).(['aux_',num2str(c)]) = casadi.SX.sym(['collocation_var_inc',num2str(inc),'_samp',num2str(c)],[C.dim.state,1]);
@@ -1377,11 +1377,11 @@ classdef TRYMPC < handle
          Arg = struct;
          Arg.state = C.cas.var.state;
          % Arg.aux = C.cas.integrator.aux.var.subvec(C.cas.integrator.aux.var.str.increment_1);
-         Arg.aux = structor.subvec(C.cas.integrator.aux.var,C.cas.integrator.aux.var.str.increment_1);
+         Arg.aux = structor2.subvec(C.cas.integrator.aux.var,C.cas.integrator.aux.var.str.increment_1);
 
          % Use collocation variables of first step as collocation variables
          % col_vars = C.cas.integrator.aux.var.subvec(C.cas.integrator.aux.var.str.increment_1);
-         col_vars = structor.subvec(C.cas.integrator.aux.var,C.cas.integrator.aux.var.str.increment_1);
+         col_vars = structor2.subvec(C.cas.integrator.aux.var,C.cas.integrator.aux.var.str.increment_1);
          col_vars = reshape(col_vars,C.dim.state,C.integrator.collocation.d);
          col_vars = [C.cas.var.state col_vars];
          
@@ -1407,12 +1407,12 @@ classdef TRYMPC < handle
 
 
          %%%%%%%%%% Create collocation expressions for each step
-         C.cas.integrator.aux.expr = structor;
+         C.cas.integrator.aux.expr = structor2;
          Arg = struct;
          Arg_dyn = C.cas.var;
          for inc = 1:C.integrator.n_increments
             % Arg.aux = C.cas.integrator.aux.var.subvec(C.cas.integrator.aux.var.str.(['increment_',num2str(inc)]));
-            Arg.aux = structor.subvec(C.cas.integrator.aux.var,C.cas.integrator.aux.var.str.(['increment_',num2str(inc)]));
+            Arg.aux = structor2.subvec(C.cas.integrator.aux.var,C.cas.integrator.aux.var.str.(['increment_',num2str(inc)]));
             Arg.tau = 0;
             Arg.state = Arg_dyn.state;
             % C.cas.integrator.aux.expr.str.(['step_',num2str(n)]).stage_1 = Arg_dyn.state - C.cas.integrator.collocation.p.F.call(Arg).out;
@@ -1651,7 +1651,7 @@ classdef TRYMPC < handle
          % create primal-dual vector
          switch primaldual_type
             case "stacked"
-               C.cas.problem.primaldual = structor("default_mix","separated");
+               C.cas.problem.primaldual = structor2("default_mix","separated");
                C.cas.problem.primaldual.str.primal = C.cas.problem.decision.vec;
                C.cas.problem.primaldual.str.lambda.all = C.cas.problem.lambda.vec;
                if C.flag_has_inequality
@@ -1659,7 +1659,7 @@ classdef TRYMPC < handle
                end
                primaldual = C.cas.problem.primaldual.vec;
             case "sorted"
-               C.cas.problem.primaldual = structor("default_mix","TRYMPC_horizon");
+               C.cas.problem.primaldual = structor2("default_mix","TRYMPC_horizon");
                C.cas.problem.primaldual.str = C.cas.problem.decision.str;
                C.cas.problem.primaldual.str.lambda = C.cas.problem.lambda.str;
                if C.flag_has_inequality
@@ -1700,7 +1700,7 @@ classdef TRYMPC < handle
          end
          if C.integrator.has_aux
             % C.display.problem.n_aux      = numel(C.cas.problem.decision.subvec(C.cas.problem.decision.str.aux));
-            C.display.problem.n_aux      = numel(structor.subvec(C.cas.problem.decision,C.cas.problem.decision.str.aux));
+            C.display.problem.n_aux      = numel(structor2.subvec(C.cas.problem.decision,C.cas.problem.decision.str.aux));
          end
 
          %%% Constraints
@@ -1722,14 +1722,14 @@ classdef TRYMPC < handle
          % algebraic constraints
          if C.flag_has_algeb
             % v = C.cas.horizon.constraints.equality.subvec(C.cas.horizon.constraints.equality.str.algebraic);
-            v = structor.subvec(C.cas.horizon.constraints.equality,C.cas.horizon.constraints.equality.str.algebraic);
+            v = structor2.subvec(C.cas.horizon.constraints.equality,C.cas.horizon.constraints.equality.str.algebraic);
             C.display.problem.n_algebraic_constraints = length(v);
          end
 
          % other constraints
          if C.flag_stage_constraints_defined && isfield(C.cas.constraints,'equality')
             % v = C.cas.horizon.constraints.equality.subvec(C.cas.horizon.constraints.equality.str.general);
-            v = structor.subvec(C.cas.horizon.constraints.equality,C.cas.horizon.constraints.equality.str.general);
+            v = structor2.subvec(C.cas.horizon.constraints.equality,C.cas.horizon.constraints.equality.str.general);
             C.display.problem.n_other_constraints = length(v);
          end
 
@@ -1776,12 +1776,12 @@ classdef TRYMPC < handle
       function generate_multipliers(C)
          
          % equality multipliers:
-         C.cas.problem.lambda = structor("default_mix",C.cas.horizon.constraints.equality.default_mix);
+         C.cas.problem.lambda = structor2("default_mix",C.cas.horizon.constraints.equality.default_mix);
          C.cas.problem.lambda.str = loop_structure(C.cas.horizon.constraints.equality.str,'Lag_mult_lambda');
 
          % inequality multipliers:
          if C.flag_has_inequality
-            C.cas.problem.mu = structor("default_mix",C.cas.horizon.constraints.inequality.default_mix);
+            C.cas.problem.mu = structor2("default_mix",C.cas.horizon.constraints.inequality.default_mix);
             C.cas.problem.mu.str = loop_structure(C.cas.horizon.constraints.inequality.str,'Lag_mult_mu');
          end
 
@@ -2478,7 +2478,7 @@ classdef TRYMPC < handle
 
       %%%%%%%%%%%%%%%% ipopt
       function pre_initialize_ipopt(C)
-         C.internal_mpc.S = structor(default_mix="TRYMPC_horizon");
+         C.internal_mpc.S = structor2(default_mix="TRYMPC_horizon");
          C.internal_mpc.S.str.equality = C.cas.horizon.constraints.equality.str;
          if C.flag_has_inequality
             C.internal_mpc.S.str.inequality = C.cas.horizon.constraints.inequality.str;
@@ -2603,9 +2603,9 @@ problems, so maybe I will do this for the reference too at some point.
          % Extract Solution to use for next initial guess
          C.internal_mpc.solution.decision  = C.cas.problem.decision.retrieve(full(C.internal_mpc.solution_ipopt.x));
          S_num = C.internal_mpc.S.retrieve(full(C.internal_mpc.solution_ipopt.lam_g));
-         C.internal_mpc.solution.dual_eq = structor.subvec(S_num,S_num.str.equality);
+         C.internal_mpc.solution.dual_eq = structor2.subvec(S_num,S_num.str.equality);
          if C.flag_has_inequality
-            C.internal_mpc.solution.dual_in = structor.subvec(S_num,S_num.str.inequality);
+            C.internal_mpc.solution.dual_in = structor2.subvec(S_num,S_num.str.inequality);
          end
 
          % when stacked:
@@ -2630,9 +2630,9 @@ problems, so maybe I will do this for the reference too at some point.
          % Extract Solution to use for next initial guess
          C.internal_mpc.solution.decision  = C.cas.problem.decision.retrieve(C.internal_mpc.decision);
          primaldual = C.cas.problem.primaldual.retrieve([C.internal_mpc.decision; C.internal_mpc.lambda; C.internal_mpc.mu]);
-         C.internal_mpc.solution.dual_eq = structor.subvec(C.cas.problem.primaldual,primaldual.str.lambda);
+         C.internal_mpc.solution.dual_eq = structor2.subvec(C.cas.problem.primaldual,primaldual.str.lambda);
          if C.flag_has_inequality
-            C.internal_mpc.solution.dual_in = structor.subvec(C.cas.problem.primaldual,primaldual.str.mu);
+            C.internal_mpc.solution.dual_in = structor2.subvec(C.cas.problem.primaldual,primaldual.str.mu);
          end
 
       end
@@ -2773,9 +2773,9 @@ problems, so maybe I will do this for the reference too at some point.
          % Extract Solution to use for next initial guess
          C.internal_mpc.solution.decision  = C.cas.problem.decision.retrieve(C.internal_mpc.decision);
          primaldual = C.cas.problem.primaldual.retrieve([C.internal_mpc.decision; C.internal_mpc.lambda; C.internal_mpc.mu]);
-         C.internal_mpc.solution.dual_eq = structor.subvec(C.cas.problem.primaldual,primaldual.str.lambda);
+         C.internal_mpc.solution.dual_eq = structor2.subvec(C.cas.problem.primaldual,primaldual.str.lambda);
          if C.flag_has_inequality
-            C.internal_mpc.solution.dual_in = structor.subvec(C.cas.problem.primaldual,primaldual.str.mu);
+            C.internal_mpc.solution.dual_in = structor2.subvec(C.cas.problem.primaldual,primaldual.str.mu);
          end
       end
 
@@ -4222,7 +4222,7 @@ Relevant options:
          arguments
             C
 
-            trajecotry (1,1) structor
+            trajecotry (1,1) structor2
             times (1,:) double
 
             % common options:
