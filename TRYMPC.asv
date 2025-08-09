@@ -1676,7 +1676,7 @@ classdef TRYMPC < handle
          % create primal-dual vector
          switch primaldual_type
             case "stacked"
-               C.cas.problem.primaldual = structor2;
+               C.cas.problem.primaldual = structor2("default_mix","separated");
                C.cas.problem.primaldual.str.primal = C.cas.problem.decision.vec;
                C.cas.problem.primaldual.str.lambda.all = C.cas.problem.lambda.vec;
                if C.flag_has_inequality

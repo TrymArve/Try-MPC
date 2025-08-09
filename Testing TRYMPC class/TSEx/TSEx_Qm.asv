@@ -104,7 +104,7 @@ stable_input.str.Q_c    = 0.041180244769836;
 stable_input.str.Q_m    = 0.104999313835524;
 
 % (unstable)
-unstable_eq = structor2;
+unstable_eq = structor;
 unstable_eq.str.x_I  =   0.063289699425013;
 unstable_eq.str.x_M  =   2.121424920685393;
 unstable_eq.str.x_T  = 345.0000337734414;
@@ -112,7 +112,7 @@ unstable_eq.str.x_Tc = 326.8782732745260;
 unstable_eq.str.x_D0 =   0.003285841672448;
 unstable_eq.str.x_D1 =  56.770090728413585;
 
-unstable_input = structor2;
+unstable_input = structor;
 unstable_input.str.Q_c    = 0.041180244769836;
 unstable_input.str.Q_m    = 0.104999313835524;
 
@@ -139,7 +139,7 @@ C.display_simulation("time_order","hours",reference=["state","input"]);
 N = 100;
 C.clear_problem
 C.def_objective("quadratic",["Q","R","Q_terminal"]);
-C.def_integrator("Gauss-Legendre (6. order)","n_increments",3);
+C.def_integrator("Gauss-Legendre (6. order)","n_increments",1);
 % C.def_integrator("collocation","n_increments",1);
 C.def_stage_constraints("lower_bounds",["x_I","x_M","x_T","x_Tc","x_D0","x_D1" "Q_c","Q_m"]);
 C.def_horizon(N);
