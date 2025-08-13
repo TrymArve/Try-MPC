@@ -1864,7 +1864,6 @@ classdef TRYMPC < handle
          C.speed = options.speed;
 
 
-
          % Store settings:
          C.simulation.simulator     = options.simulator;
          C.simulation.initial_state = init_state;
@@ -1910,7 +1909,7 @@ classdef TRYMPC < handle
                   mpc_options.initial_guess_dual_in = zeros(C.display.problem.n_inequality,1);
                end
 
-               % make sure to start fresh, uncorreupted by previous
+               % make sure to start fresh, uncorrupted by previous
                % simulations/optimizations:
                mpc_options.start_time = options.start_time;
                C.mpc_start_fresh(mpc_options)
@@ -1957,7 +1956,7 @@ classdef TRYMPC < handle
                C.simulation.controller_handle = @(C,t,x) C.(['controller_',char(options.controller_type)])(t,x);
          end
 
-         % Just create this this too:
+         % Just create this too:
          C.internal_mpc.halt = false;
 
          %%%%%%% INITIALIZE SIMULATION:
@@ -2033,9 +2032,9 @@ classdef TRYMPC < handle
             end
          else
             if isinf(C.simulation.sampling_time)
-               C.internal_sim.ode_inputs = @(t,x) C.simulation.controller_handle(C,t,x);
+               C.internal_sim.ode_inputs = @(t,x) C.simulation.controller_handle(C,t,x); % If (sampling_time == inf) then we don't have sampling time, and continuously update the contol input (call controller_handle on every pass)
             else
-               C.internal_sim.ode_inputs = @(t,x) C.internal_sim.u_current;
+               C.internal_sim.ode_inputs = @(t,x) C.internal_sim.u_current; % If (0 < sampling_time < inf) then we only update the control signal at once per sample, and this update is captured in u_current
             end
          end
 
