@@ -1,0 +1,87 @@
+classdef trympcNUMERIC_MODEL
+   properties
+
+      % Give the model instance a name
+      Name
+
+      % Specific parameter values for a model
+      param = structor;
+
+      % A suggested initial state for a model (for the given parameters)
+      initial_state % structor
+      initial_algeb % structor
+      
+      % A stable equilibrium of a model (for the given parameters)
+      stable_equilibrium_state % structor
+      stable_equilibrium_algeb% structor
+      stable_equilibrium_input% structor
+
+      % An unstable equilibrium of a model (for the given parameters)
+      unstable_equilibrium_state% structor
+      unstable_equilibrium_algeb% structor
+      unstable_equilibrium_input% structor
+
+      % A reference to track (function_handle: @(t))
+      ref_state
+      ref_algeb
+      ref_input
+      ref_output
+   end
+
+
+   methods
+      function C = trympcNUMERIC_MODEL(Name,param,options)
+         arguments
+            Name (1,1) string
+
+            % model parameters 
+            param structor
+
+            % A suggested initial state for a model (for the given parameters)
+            options.initial_state structor
+            options.initial_algeb structor
+
+            % A stable equilibrium of a model (for the given parameters)
+            options.stable_equilibrium_state structor
+            options.stable_equilibrium_algeb structor
+            options.stable_equilibrium_input structor
+            options.stable_equilibrium_output structor
+
+            % An unstable equilibrium of a model (for the given parameters)
+            options.unstable_equilibrium_state structor
+            options.unstable_equilibrium_algeb structor
+            options.unstable_equilibrium_input structor
+            options.unstable_equilibrium_ouput structor
+
+            % references  ( @(t) a function of time )
+            options.ref_state  function_handle = @(t) [];
+            options.ref_algeb  function_handle = @(t) [];
+            options.ref_input  function_handle = @(t) [];
+            options.ref_output function_handle = @(t) [];
+         end
+
+         C.Name = Name;
+         C.param = param;
+
+         Props = ["initial_state",...
+                  "initial_algeb",...
+                  "stable_equilibrium_state",...
+                  "stable_equilibrium_algeb",...
+                  "stable_equilibrium_input",...
+                  "unstable_equilibrium_state",...
+                  "unstable_equilibrium_algeb",...
+                  "unstable_equilibrium_input",...
+                  "ref_state",...
+                  "ref_algeb",...
+                  "ref_input",...
+                  "ref_output"];
+
+         for prop = Props
+            if isfield(options,prop)
+               C.(prop) = options.(prop);
+            end
+         end
+
+      end
+   end
+end

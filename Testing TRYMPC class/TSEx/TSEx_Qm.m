@@ -20,8 +20,8 @@ C.parameters.str.M_f         = 8.6981;
 C.parameters.str.Q_i         = 0.040001583018170; %0.03; % added this
 C.parameters.str.T_cf        = 295;
 C.parameters.str.T_f         = 330;
-C.parameters.str.V           = 3000;
-C.parameters.str.V_c         = 3312.4;
+C.parameters.str.V           = 1000; % original: 3000
+C.parameters.str.V_c         = 1000; % original: 3312.4
 C.parameters.str.nDHr        = 16700;      % Don't change
 C.parameters.str.M_m         = 104.14;
 C.parameters.str.gamma       = 0.2;
@@ -52,7 +52,7 @@ C.parameters.str.gamma       = 0.2;
 C.parameters.str.lambda      = 0.6;
 
 
-%% Parameter Error: (difference from optimizatoin model to simulation model)
+%% Parameter Error: (difference from optimization model to simulation model)
 param_error = C.parameters.zeros;
 param_error.str.rhoC_p      = 10; % Connected with Q_m
 param_error.str.rhoC_pc     = 10; % Connected with Q_m
@@ -77,7 +77,20 @@ param_error.str.V_c         = 3.4; % Connected with Q_m
 % param_error.str.gamma       = 0.0;
 % param_error.str.lambda      = 0.0;
 
-param_error_scaler = 5e0; %use -5 for super stiff system
+param_error_scaler = 1e2; %use -5 for super stiff system
+%% Alternative 2: Volume
+param_error = C.parameters.zeros;
+param_error.str.rhoC_p      = -100; % Connected with Q_m
+param_error.str.rhoC_pc     = -200; % Connected with Q_m
+param_error.str.hA          = -20; % Connected with Q_m
+param_error.str.V           = -2000; % Connected with Q_m
+param_error.str.V_c         =  0; % Connected with Q_m
+
+param_error_scaler = 0e-3; %use -5 for super stiff system
+start_varying = 1/10; % fraction of duration at which to start the parameter varying
+
+%% Duration 300 hours
+duration = hours(300);
 %% Duration 150 hours
 duration = hours(150);
 %% Duration 50 hours
@@ -87,17 +100,31 @@ duration = hours(20);
 %% Duration 1 hour
 duration = hours(1);
 
+%% define randomness:
+deviation = 1;
+randy = @() 2*(rand-0.5)*deviation + 1;
+
+%% Varying Parameters: step
+varying_parameters = @(t) C.parameters.vec + randy()*((t>start_varying*duration) + 2*(t>(start_varying + (1-start_varying)/2)*duration))*param_error.vec*param_error_scaler; % Make a varying parameter function handle
+
+%% Varying Parameters: gradual (linear)
+varying_parameters = @(t) C.parameters.vec + randy()*((max(t,start_varying*duration)-start_varying*duration)/(duration*(1-start_varying)))*param_error.vec*param_error_scaler; % Make a varying parameter function handle
+
+%% Varying Parameters: gradual (sqrt)
+varying_parameters = @(t) C.parameters.vec + randy()*sqrt((max(t,start_varying*duration)-start_varying*duration)/(duration*(1-start_varying)))*param_error.vec*param_error_scaler; % Make a varying parameter function handle
+
+
 
 %% Steady States
 
 % (stable) 
 stable_eq = structor;
-stable_eq.str.x_I    =   0.000678299473479*100;
-stable_eq.str.x_M    =   0.024868324646752*100;
-stable_eq.str.x_T    = 3.309412492548807*100;
-stable_eq.str.x_Tc   = 3.179149361144789*100;
-stable_eq.str.x_D0   =   0.000005624677817*100;
-stable_eq.str.x_D1   =  0.187149596804018*100;
+stable_eq.str.x_I    = 0.000678299473481    *100;
+stable_eq.str.x_M    = 0.024868324646906    *100;
+stable_eq.str.x_T    =  3.309412492542791    *100;
+stable_eq.str.x_Tc   = 3.179149361140690    *100;
+stable_eq.str.x_D0   =   0.000005624677816    *100;
+stable_eq.str.x_D1   =  0.187149596787991    *100;
 
 stable_input = structor;
 stable_input.str.Q_c    = 0.041180244769836;
@@ -116,6 +143,16 @@ unstable_input = structor;
 unstable_input.str.Q_c    = 0.041180244769836;
 unstable_input.str.Q_m    = 0.104999313835524;
 
+%% Alternative Stable Steady State
+load('stable_eq_saved.mat')
+load('unstable_eq_saved.mat')
+% (stable) 
+stable_eq = stable_eq_saved(1);
+stable_input = stable_eq_saved(2);
+
+% (unstable) 
+unstable_eq = unstable_eq_saved(1);
+unstable_input = unstable_eq_saved(2);
 
 %% Reference (stable)
 C.set_ref("state",stable_eq.vec,"input",stable_input.vec)
@@ -127,20 +164,47 @@ steady_controller = stable_input;
 %% Unstable Equilibrium as initial condition
 initial_state = unstable_eq;
 steady_controller = unstable_input;
+%% Modify initial state:
+initial_state_scaler = 1;
+initial_state.str.x_I    = initial_state_scaler*initial_state.str.x_I;
+initial_state.str.x_M    = initial_state_scaler*initial_state.str.x_M;
+initial_state.str.x_T    = initial_state_scaler*initial_state.str.x_T;
+initial_state.str.x_Tc   = initial_state_scaler*initial_state.str.x_Tc;
+initial_state.str.x_D0   = initial_state_scaler*initial_state.str.x_D0;
+initial_state.str.x_D1   = initial_state_scaler*initial_state.str.x_D1;
 
 %% Simulate (uncontrolled)
-C.simulate(duration,initial_state.vec,simulator="ode15s",controller_type="constant",controller_constant=steady_controller.vec,simulation_parameters=C.parameters.vec-param_error.vec*param_error_scaler)
+
+C.simulate(duration,initial_state.vec,simulator="ode15s",controller_type="constant",controller_constant=steady_controller.vec,simulation_parameters=varying_parameters)
 C.display_simulation("time_order","hours",reference=["state","input"]);
 % C.archive.simulations{end}.sim.state(:,end) % use to extract steady state for new parameters.
 
+%% In order to define stable steady state exactly
+sim_end = C.archive.simulations{end}.sim.state(:,end);
+sim_inputs = C.archive.simulations{end}.sim.input_effective(:,end);
+% (stable) 
+stable_eq_saved = [structor; structor];
+stable_eq_saved(1).str.x_I    = sim_end(1);
+stable_eq_saved(1).str.x_M    = sim_end(2);
+stable_eq_saved(1).str.x_T    = sim_end(3);
+stable_eq_saved(1).str.x_Tc   = sim_end(4);
+stable_eq_saved(1).str.x_D0   = sim_end(5);
+stable_eq_saved(1).str.x_D1   = sim_end(6);
+stable_eq_saved(2).str.Q_c   = sim_inputs(1);
+stable_eq_saved(2).str.Q_m   = sim_inputs(2);
+% save('stable_eq_saved',"stable_eq_saved")
 
+
+
+%% Get sensitivity matrix and extract element
+
+ 
 
 %% Create Optimization Problem
-N = 100;
+N = 50;
 C.clear_problem
 C.def_objective("quadratic",["Q","R","Q_terminal"]);
-C.def_integrator("Gauss-Legendre (6. order)","n_increments",1);
-% C.def_integrator("collocation","n_increments",1);
+C.def_integrator("ERK4","n_increments",6);
 C.def_stage_constraints("lower_bounds",["x_I","x_M","x_T","x_Tc","x_D0","x_D1" "Q_c","Q_m"]);
 C.def_horizon(N);
 
@@ -151,9 +215,9 @@ C.def_horizon(N);
 % state:
 Q = structor;
 Q.str.x_I    = 1;
-Q.str.x_M    = 1; 
-Q.str.x_T    = 1;
-Q.str.x_Tc   = 1;
+Q.str.x_M    = 0; 
+Q.str.x_T    = 0;
+Q.str.x_Tc   = 0;
 Q.str.x_D0   = 1;
 Q.str.x_D1   = 1;
 C.quadratic_cost.Q = Q.vec;
@@ -163,7 +227,7 @@ C.quadratic_cost.Q_terminal = Q.vec*100;
 R = structor;
 R.str.Q_c    = 1;
 R.str.Q_m    = 1;
-C.quadratic_cost.R = R.vec;
+C.quadratic_cost.R = R.vec*1e-2;
 
 %%% Bounds:
 C.bounds.lower.x_I    = 0;
@@ -200,6 +264,10 @@ initial_guess = C.opt2guess;
 C.solve("ipopt","display_result",true,"initial_state",initial_state.vec,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in);
 C.display_optimization(time_order="hours",reference=["state","input"]);
 
+%% Open-Loop (with good initial guess) SQP-algoritm
+C.set_SQP_settings("tolerance_lagrangian",100,"tolerance_equality",1e-10,"backtracking_min_step_size",1e-4)
+C.solve("sqp","display_result",true,"initial_state",initial_state.vec,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in);
+C.display_optimization(time_order="hours",reference=["state","input"]);
 
 %% SIMULATION
 
@@ -207,17 +275,17 @@ C.display_optimization(time_order="hours",reference=["state","input"]);
 initial_state = stable_eq;
 
 %% Simulate NMPC (ipopt)
-dur = hours(30);
-samp_time = minutes(24);
-C.simulate(dur,initial_state.vec,"controller_type","NMPC_ipopt","sampling_time",samp_time,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in,simulation_parameters=C.parameters.vec-param_error.vec*param_error_scaler);
+dur = hours(60);
+samp_time = minutes(60);
+C.simulate(dur,initial_state.vec,"controller_type","NMPC_ipopt","sampling_time",samp_time,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in,simulation_parameters=varying_parameters,use_sim_param_for_NMPC=true);
 sim_ipopt = length(C.archive.simulations);
 sim_number = sim_ipopt;
-%% Simulate NMPC (RTI)
-C.set_SQP_settings("max_N_iterations",1,"tolerance_lagrangian",1e10)
+%% Simulate NMPC (SQP)
+C.set_SQP_settings("max_N_iterations",1000,"tolerance_lagrangian",1e1)
 
-dur = hours(5);
-samp_time = minutes(24);
-C.simulate(dur,initial_state.vec,"controller_type","RTI","sampling_time",samp_time,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in,simulation_parameters=C.parameters.vec-param_error.vec*param_error_scaler);
+dur = hours(20);
+samp_time = minutes(60);
+C.simulate(dur,initial_state.vec,"controller_type","NMPC_sqp","sampling_time",samp_time,initial_guess_primal=initial_guess.primal.vec,initial_guess_dual_eq=initial_guess.dual_eq,initial_guess_dual_in=initial_guess.dual_in,simulation_parameters=varying_parameters);
 sim_RTI = length(C.archive.simulations);
 sim_number = sim_RTI;
 
@@ -231,7 +299,9 @@ stable.str.input = stable_input.vec*[1 1];
 time = C.archive.simulations{sim_number}.start_time + [0 C.archive.simulations{sim_number}.duration];
 C.display_trajectory(stable,time,tiles=tiles,colors="black",linewidth=1.5,linestyle=":",time_order="hours");
 %% Plot predictions along the way:
-C.display_optimization(tiles=tiles,optimizations=C.archive.simulations{sim_number}.optimizations,optimization_number=[1 5 10],time_order="hours",linestyle="--");
+N_optimizations = length(C.archive.simulations{sim_number}.optimizations);
+optnum_to_disp = round(linspace(1,N_optimizations,5));
+C.display_optimization(tiles=tiles,optimizations=C.archive.simulations{sim_number}.optimizations,optimization_number=optnum_to_disp,time_order="hours",linestyle="--");
 
 %% Extract end state
 end_state_NMPC = C.archive.simulations{sim_number}.sim.state(:,end); % use to extract steady state for new parameters.
@@ -240,9 +310,32 @@ end_input_NMPC = C.archive.simulations{end}.optimizations{end}.decision.str.inpu
 initial_state = initial_state.retrieve(end_state_NMPC);
 
 %% Simulate (uncontrolled)
-C.simulate(duration,end_state_NMPC,simulator="ode15s",controller_type="constant",controller_constant=end_input_NMPC,simulation_parameters=C.parameters.vec-param_error.vec*param_error_scaler)
+C.simulate(duration,end_state_NMPC,simulator="ode15s",controller_type="constant",controller_constant=end_input_NMPC,simulation_parameters=varying_parameters)
 C.display_simulation("time_order","hours",reference=["state","input"]);
 % C.archive.simulations{end}.sim.state(:,end) % use to extract steady state for new parameters.
 
 
 
+
+%% If a unstable steady state is found via closed loop simulation, save with this:
+sim_end = C.archive.simulations{end}.sim.state(:,end);
+sim_inputs = C.archive.simulations{end}.sim.input_effective(:,end);
+% (unstable) 
+unstable_eq_saved = [structor; structor];
+unstable_eq_saved(1).str.x_I    = sim_end(1);
+unstable_eq_saved(1).str.x_M    = sim_end(2);
+unstable_eq_saved(1).str.x_T    = sim_end(3);
+unstable_eq_saved(1).str.x_Tc   = sim_end(4);
+unstable_eq_saved(1).str.x_D0   = sim_end(5);
+unstable_eq_saved(1).str.x_D1   = sim_end(6);
+unstable_eq_saved(2).str.Q_c   = sim_inputs(1);
+unstable_eq_saved(2).str.Q_m   = sim_inputs(2);
+save('unstable_eq_saved',"unstable_eq_saved")
+
+
+%% Check closed loop NMPC parameters:
+dp = [];
+for i = 1:length(C.archive.simulations{end}.optimizations)-1
+   dp = [dp C.archive.simulations{end}.optimizations{i+1}.parameters.vec - C.archive.simulations{end}.optimizations{i}.parameters.vec];
+end
+disp(dp)

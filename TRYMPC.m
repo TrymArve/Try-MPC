@@ -73,7 +73,7 @@ classdef TRYMPC < handle
 
       internal_sim (1,1) struct % contains information about the simulation, but that is not useful to the user. ("simulation" contains user-relevant info)
       internal_mpc (1,1) struct % contains info about the running optimization scheme (MPC), which are not relevant for user. % not sure yet: ("current" contains user-relevant info)
-      SQP_info (1,1) struct % contains the logged information about an SQP solve routine temporarily, before being stored in an approperiate archive location. (mey vary for single solves and mpc runs)
+      SQP_info (1,1) struct % contains the logged information about an SQP solve routine temporarily, before being stored in an approperiate archive location. (may vary for single solves and mpc runs)
 
       % Keep track of changing numerical values:
       flag_parameters_changed (1,1) logical = true;
@@ -169,7 +169,7 @@ classdef TRYMPC < handle
             names.param (:,1) string
          end
 
-         fprintf(['Created a TRYMPC instance: "', char(class_instance_name),'"... ']);
+         fprintf(['Creating a TRYMPC instance: "', char(class_instance_name),'"... ']);
          create_time = tic;
 
 
@@ -198,6 +198,8 @@ classdef TRYMPC < handle
          disp(['done.  ',sec2str(create_time)]);
          disp( '            -- Use "TRYMPC.help" for further instructions.')
       end
+
+      
       function def_instance(C,names)
          % Prepare restoration
          C.restore_cell{end}.def_instance = {names};
@@ -914,9 +916,9 @@ classdef TRYMPC < handle
                         invalid_name = false;
                         C.cas.bounds.(bound_type).(name) = casadi.SX.sym([char(bound_type),'_bound_',char(name)]);
                         if bound_type == "lower"
-                           expr = [expr; -C.cas.bounds.(bound_type).(name) + C.cas.(type).(name)]; %#ok<AGROW>
+                           expr = [expr; -C.cas.bounds.(bound_type).(name) + C.cas.(type).(name)]; 
                         elseif bound_type == "upper"
-                           expr = [expr;  C.cas.bounds.(bound_type).(name) - C.cas.(type).(name)]; %#ok<AGROW>
+                           expr = [expr;  C.cas.bounds.(bound_type).(name) - C.cas.(type).(name)]; 
                         end
                      end
                   end
@@ -1054,9 +1056,9 @@ classdef TRYMPC < handle
                         invalid_name = false;
                         C.cas.terminal_bounds.(bound_type).(name) = casadi.SX.sym([char(bound_type),'_terminal_bound_',char(name)]);
                         if bound_type == "lower"
-                           expr = [expr; -C.cas.terminal_bounds.(bound_type).(name) + C.cas.(type).(name)]; %#ok<AGROW>
+                           expr = [expr; -C.cas.terminal_bounds.(bound_type).(name) + C.cas.(type).(name)]; 
                         elseif bound_type == "upper"
-                           expr = [expr;  C.cas.terminal_bounds.(bound_type).(name) - C.cas.(type).(name)]; %#ok<AGROW>
+                           expr = [expr;  C.cas.terminal_bounds.(bound_type).(name) - C.cas.(type).(name)]; 
                         end
                      end
                   end
@@ -1138,7 +1140,7 @@ classdef TRYMPC < handle
                   else
                      var_name = char(name);
                   end
-                  var_name = ['k',num2str(k),'_',var_name]; %#ok<AGROW>
+                  var_name = ['k',num2str(k),'_',var_name]; 
                   S_copy.(name) = casadi.SX.sym(var_name,size(S.(name)));
                end
             end
@@ -1302,7 +1304,7 @@ classdef TRYMPC < handle
                for a = 1:s-1
                   in_vars.state = in_vars.state + A(s,a)*f(:,a)*(C.cas.integrator.Dt/C.integrator.n_increments);
                end
-               f = [f C.cas.dynamics.F.call(in_vars).out]; %#ok<AGROW>
+               f = [f C.cas.dynamics.F.call(in_vars).out];
             end
             next_state = next_state + (f*b).*(C.cas.integrator.Dt/C.integrator.n_increments);
          end
@@ -1822,7 +1824,8 @@ classdef TRYMPC < handle
             options.simulator (1,1) string {mustBeMember(options.simulator,["ode45","ode23","ode113","ode78","ode89","ode15s","ode23s","ode23t","ode23tb","ode15i"])} = "ode45";
             options.ode_options (1,1) struct = odeset('RelTol',10^(-7),'AbsTol',10^(-7));
             options.start_time (1,1) double {mustBeReal} = 0;
-            options.simulation_parameters (:,1) double = C.parameters.vec; % use this to set different parameters for the simulation model than for the optimization model.
+            options.simulation_parameters (:,1) = C.parameters.vec; % use this to set different parameters for the simulation model than for the optimization model.
+            options.use_sim_param_for_NMPC (1,1) logical = false;
 
             % controller settings:
             options.sampling_time (1,1) double {mustBePositive} = inf;
@@ -1856,6 +1859,10 @@ classdef TRYMPC < handle
             % mpc_options.input_ref (:,:) double
          end
 
+
+         % Declare that we are currently in a simulation:
+         C.internal_sim.currently_in_simulation = true;
+
          if ~C.flag_dynamics_defined
             C.usererror('must define dynamics before simulating.')
          end
@@ -1873,11 +1880,28 @@ classdef TRYMPC < handle
          C.simulation.ode_options   = options.ode_options;
          C.simulation.sampling_time = options.sampling_time;
          C.simulation.control_delay_scaler = options.control_delay_scaler;
+        
+                  %%%%%%% INITIALIZE SIMULATION:
+         C.internal_sim.simulator_handle = str2func(C.simulation.simulator);
+         C.internal_sim.time = options.start_time;
+         C.internal_sim.state = init_state;
+         C.internal_sim.u_current = 0;
+         C.internal_sim.use_sim_param_for_NMPC = options.use_sim_param_for_NMPC;
+
          if isinf(options.input_disturbance(C,options.start_time,init_state))
             C.simulation.input_disturbance = "none";
          else
             C.simulation.input_disturbance = options.input_disturbance;
          end
+
+         if isa(options.simulation_parameters,'function_handle')
+            C.internal_sim.parameters_handle = options.simulation_parameters; % in this case, it is already a funciton handle, and we simply pass it on.
+         elseif isa(options.simulation_parameters,'double') && size(options.simulation_parameters,1) == numel(options.simulation_parameters)
+            C.internal_sim.parameters_handle = @(~) options.simulation_parameters; % in this case, "options.simulation_parameters" is a double vector, and we just make a function_handle out of it
+         else
+            error("USER ERROR: you may only pass a 'double' vector or a 'function_handle' to the 'simulation_parameters' argument option of Simulate(). You passed a: " + class(options.simulation_parameters))
+         end
+
 
          % Assume extarnal controller, and set to true if internal is used:
          C.internal_mpc.internal_controller = false;
@@ -1959,26 +1983,23 @@ classdef TRYMPC < handle
          % Just create this too:
          C.internal_mpc.halt = false;
 
-         %%%%%%% INITIALIZE SIMULATION:
-         C.internal_sim.simulator_handle = str2func(C.simulation.simulator);
-         C.internal_sim.time = C.simulation.start_time;
-         C.internal_sim.state = C.simulation.initial_state;
-         C.internal_sim.u_current = 0;
+
+         % Prepare arguments:
          Arg = struct;
-         arg_param = @() setfield(Arg,'param',options.simulation_parameters);
-         arg_state = @(state) setfield(arg_param(),'state',state);
+         arg_param = @(t) setfield(Arg,'param',C.internal_sim.parameters_handle(t)); % changed: options.simulation_parameters --> C.internal_sim.parameters_handle(t)
+         arg_state = @(state,t) setfield(arg_param(t),'state',state);
          if C.flag_has_algeb
-            arg_algeb = @(state,algeb) setfield(arg_state(state),'algeb',algeb);
+            arg_algeb = @(state,algeb,t) setfield(arg_state(state,t),'algeb',algeb);
          else
-            arg_algeb = @(state,~) arg_state(state);
+            arg_algeb = @(state,~,t) arg_state(state,t);
          end
          if C.flag_has_input
-            arg_input = @(state,algeb,input) setfield(arg_algeb(state,algeb),'input',input);
+            arg_input = @(state,algeb,input,t) setfield(arg_algeb(state,algeb,t),'input',input);
          else
-            arg_input = @(state,algeb,~) arg_algeb(state,algeb);
+            arg_input = @(state,algeb,~,t) arg_algeb(state,algeb,t);
          end
          
-         C.internal_sim.arg = @(x,u) arg_input(x(1:C.dim.state),x((C.dim.state+1):end),u);
+         C.internal_sim.arg = @(x,u,t) arg_input(x(1:C.dim.state),x((C.dim.state+1):end),u,t);
 
 
          if C.flag_has_algeb
@@ -2104,7 +2125,7 @@ classdef TRYMPC < handle
             if  C.internal_sim.simulation_increment
                % Simulate the current increment
                [C.internal_sim.t_sim,C.internal_sim.x_sim] = C.internal_sim.simulator_handle( ...
-                  @(t,x) full(C.cas.dynamics.F.call(C.internal_sim.arg(x,C.internal_sim.ode_inputs(t,x))).out), ...  % system dynamics
+                  @(t,x) full(C.cas.dynamics.F.call(C.internal_sim.arg(x,C.internal_sim.ode_inputs(t,x),t)).out), ...  % system dynamics
                   C.internal_sim.time+[0,C.internal_sim.simulation_increment],...  % time interval of integration
                   C.internal_sim.state,...  % initial state (current state of the greater simulation)
                   C.simulation.ode_options); % ode options
@@ -2127,6 +2148,9 @@ classdef TRYMPC < handle
                break;
             end
          end
+
+         % We are no longer in simulation:
+         C.internal_sim.currently_in_simulation = false;
 
          if C.internal_mpc.halt || options.halting_condition(C.internal_sim.state,C.internal_sim.u_current,C.parameters.vec) > 0
             disp(' ')
@@ -2575,7 +2599,9 @@ problems, so maybe I will do this for the reference too at some point.
          % Define nlpsol:
          tic
          C.internal_mpc.solver = casadi.nlpsol('solver','ipopt', C.internal_mpc.solver_def, C.internal_mpc.nlpsol_options);
-         disp(['define nlpsol: ',sec2str(toc)])
+         if ~isfield(C.internal_sim,'currently_in_simulation') || ~C.internal_sim.currently_in_simulation
+            disp(['define nlpsol: ',sec2str(toc)])
+         end
 
          C.flag_numerical_values_changed = false;
       end
@@ -2583,7 +2609,7 @@ problems, so maybe I will do this for the reference too at some point.
       function internal_ipopt(C)
 
 
-         if C.flag_numerical_values_changed || C.reference.ref_type.master == "varying"
+         if C.flag_numerical_values_changed || C.reference.ref_type.master == "varying" || (isfield(C.internal_sim,'currently_in_simulation') && C.internal_sim.currently_in_simulation && C.internal_sim.use_sim_param_for_NMPC)
             C.initialize_ipopt
          end
          
@@ -2712,7 +2738,14 @@ problems, so maybe I will do this for the reference too at some point.
                   C.SQP_info.success_flag = 0;
                   break;
                else % Monitor progress:
-                  if best_staionarity <= C.SQP_info.convergence.stationarity(end)
+
+                  disp('#############')
+                  dispt('iter: ',iteration)
+                  dispt('stationarity: (best, current, diff)',[best_staionarity, C.SQP_info.convergence.stationarity(end) , best_staionarity - C.SQP_info.convergence.stationarity(end)])
+                  dispt('    equality: (best, current, diff)',[best_equality, C.SQP_info.convergence.equality(end), best_equality - C.SQP_info.convergence.equality(end)])
+                  dispt('  inequality: (best, current)',[best_inequality, C.SQP_info.convergence.inequality(end)])
+                  
+                  if best_staionarity - C.SQP_settings.tolerance_lagrangian < C.SQP_info.convergence.stationarity(end)
                      no_prog_stationarity = no_prog_stationarity + 1;
                      % dispt('stationarity: (best, current)',[best_staionarity, C.SQP_info.convergence.stationarity(end) , best_staionarity - C.SQP_info.convergence.stationarity(end)])
                      % round((best_staionarity- C.SQP_info.convergence.stationarity(end)) * 1e18 )
@@ -2720,14 +2753,14 @@ problems, so maybe I will do this for the reference too at some point.
                      best_staionarity = C.SQP_info.convergence.stationarity(end);
                      no_prog_stationarity = 0;
                   end
-                  if best_equality <= C.SQP_info.convergence.equality(end)
+                  if best_equality - C.SQP_settings.tolerance_equality < C.SQP_info.convergence.equality(end)
                      no_prog_equality = no_prog_equality + 1;
                   else
                      best_equality = C.SQP_info.convergence.equality(end);
                      no_prog_equality = 0;
                   end
                   if C.flag_has_inequality
-                     if best_inequality <= C.SQP_info.convergence.inequality(end)
+                     if best_inequality - C.SQP_settings.tolerance_inequality < C.SQP_info.convergence.inequality(end)
                         no_prog_inequality = no_prog_inequality + 1;
                      else
                         best_inequality = C.SQP_info.convergence.inequality(end);
@@ -2739,14 +2772,12 @@ problems, so maybe I will do this for the reference too at some point.
                      break;
                   end
                   % 
-                  % dispt('iter: ',iteration)
-                  % dispt('stationarity: (best, current)',[best_staionarity, C.SQP_info.convergence.stationarity(end) , best_staionarity - C.SQP_info.convergence.stationarity(end)])
-                  % dispt('    equality: (best, current, diff)',[best_equality, C.SQP_info.convergence.equality(end), best_equality - C.SQP_info.convergence.equality(end)])
-                  % % [best_equality, C.SQP_info.convergence.equality(end), best_equality - C.SQP_info.convergence.equality(end)]
-                  % dispt('  inequality: (best, current)',[best_inequality, C.SQP_info.convergence.inequality(end)])
-                  % dispt('no progress: (stationarity) ',no_prog_stationarity)
-                  % dispt('no progress:     (equality) ',no_prog_equality)
-                  % dispt('no progress:   (inequality) ',no_prog_inequality)
+
+                  dispt('no progress: (stationarity) ',no_prog_stationarity)
+                  dispt('no progress:     (equality) ',no_prog_equality)
+                  dispt('no progress:   (inequality) ',no_prog_inequality)
+
+
 
                end
             end
@@ -2889,7 +2920,8 @@ problems, so maybe I will do this for the reference too at some point.
 
       %%%% Perform a Linesearch and take an approperiate Newton Step:
       function SQP_take_step(C)
-         a = 1; % initial step length
+         a = 1; % initial step length (for backtracking)
+         a_to_use = 0; % the step length to be used (zero if no step is accepted)
 
          % just for ease of writing the code:
          z  = C.internal_mpc.decision;
@@ -2919,7 +2951,7 @@ problems, so maybe I will do this for the reference too at some point.
 
 
                      % Find multiplier "ny" for merit function: (based on lagrangian multipliers at the candidate next guess, so has to be recomputed every time)
-                     ny = max(abs([lambda_new;mu_new]),[],"all")+1e1; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
+                     ny = max(abs([lambda_new;mu_new]),[],"all")*1.01; % must be bigger than the biggest lagrangian multiplier at the candidate next guess
 
                      % Find current merit: (must be recomputed every time because of the updated "ny" muliplier)
                      current_merit = full(C.merit(z,ny));
@@ -2930,8 +2962,11 @@ problems, so maybe I will do this for the reference too at some point.
                      % dispt('Next merit:',next_merit)
 
                      % dispt('Merit decrease:',next_merit-current_merit,'a:',a)
-                     if (next_merit < current_merit) || (a*C.SQP_settings.backtracking_rate < C.SQP_settings.backtracking_min_step_size)
-                        break;
+                     if (next_merit < current_merit) % yey!, we found a better solution
+                        a_to_use = a; % since the current a yields a better solution, we choose this a to use
+                        break 
+                     elseif (a*C.SQP_settings.backtracking_rate < C.SQP_settings.backtracking_min_step_size)
+                        break % break without choosing any a (leave it as zero) since no better solution was found with an approppriate step length.
                      end
                      a = a*C.SQP_settings.backtracking_rate;
                   end
@@ -2965,27 +3000,23 @@ problems, so maybe I will do this for the reference too at some point.
                   end
 
                   [~,ind] = min(step(2,:));
-                  a = step(1,ind);
+                  a_to_use = step(1,ind);
             end
 
          end
 
          % Take Step:
          step_time = tic;
-         C.internal_mpc.decision = C.internal_mpc.decision + a*Dz;
-         C.internal_mpc.lambda   = (1-a)*lambda + a*lambda_next;
+         C.internal_mpc.decision = C.internal_mpc.decision + a_to_use*Dz;
+         C.internal_mpc.lambda   = (1-a_to_use)*lambda + a_to_use*lambda_next;
          if C.flag_has_inequality
-            C.internal_mpc.mu       = (1-a)*mu + a*mu_next;
+            C.internal_mpc.mu       = (1-a_to_use)*mu + a_to_use*mu_next;
          end
          C.SQP_info.solve_time.take_step(end+1) = toc(step_time);
 
          % log step size:
-         C.SQP_info.step_size(end+1) = a;
-
-         % delete_me_1 = [z Dz C.internal_mpc.decision];
-         % disp('step: [z Dz dec.]')
-         % disp(delete_me_1(1:10,:))
-         % dispt('a:',a,'Newton step norm:', norm(Dz,2))
+         C.SQP_info.step_size(end+1) = a_to_use;
+         
       end
 
 
@@ -3202,7 +3233,12 @@ Relevant options:
          end
          % Prepare generic arguments:
          Arg = struct;
-         Arg.param = C.parameters.vec;
+
+         if isfield(C.internal_sim,'currently_in_simulation') && C.internal_sim.currently_in_simulation && C.internal_sim.use_sim_param_for_NMPC
+            Arg.param = C.internal_sim.parameters_handle(C.internal_sim.time);
+         else
+            Arg.param = C.parameters.vec;
+         end
 
          % % stage times:
          % C.internal_mpc.time;
@@ -4351,7 +4387,7 @@ Relevant options:
          if display_type == "constraints"
             for const_type = ["equality", "inequality"]
                if isfield(options,const_type)
-                  Types = [Types const_type]; %#ok<AGROW>
+                  Types = [Types const_type]; 
                end
             end
             if isempty(Types)
@@ -4363,7 +4399,7 @@ Relevant options:
          else
             for type = C.var_types_notpar
                if isfield(options,type)
-                  Types = [Types type]; %#ok<AGROW>
+                  Types = [Types type]; 
                end
             end
             if isempty(Types)
