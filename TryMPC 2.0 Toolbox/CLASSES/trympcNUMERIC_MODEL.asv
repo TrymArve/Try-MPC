@@ -20,6 +20,7 @@ classdef trympcNUMERIC_MODEL
 
       % A reference to track (function_handle: @(t))
       ref_state
+      ref_algeb
       ref_input
       ref_output
    end
@@ -35,19 +36,23 @@ classdef trympcNUMERIC_MODEL
 
             % A suggested initial state for a model (for the given parameters)
             options.initial_state structor
+            options.initial_algeb structor
 
             % A stable equilibrium of a model (for the given parameters)
             options.stable_equilibrium_state structor
+            options.stable_equilibrium_algeb structor
             options.stable_equilibrium_input structor
             options.stable_equilibrium_output structor
 
             % An unstable equilibrium of a model (for the given parameters)
             options.unstable_equilibrium_state structor
+            options.unstable_equilibrium_algeb structor
             options.unstable_equilibrium_input structor
             options.unstable_equilibrium_ouput structor
 
             % references  ( @(t) a function of time )
             options.ref_state  function_handle = @(t) [];
+            options.ref_algeb  function_handle = @(t) [];
             options.ref_input  function_handle = @(t) [];
             options.ref_output function_handle = @(t) [];
          end
@@ -56,11 +61,15 @@ classdef trympcNUMERIC_MODEL
          C.param = param;
 
          Props = ["initial_state",...
+                  "initial_algeb",...
                   "stable_equilibrium_state",...
+                  "stable_equilibrium_algeb",...
                   "stable_equilibrium_input",...
                   "unstable_equilibrium_state",...
+                  "unstable_equilibrium_algeb",...
                   "unstable_equilibrium_input",...
                   "ref_state",...
+                  "ref_algeb",...
                   "ref_input",...
                   "ref_output"];
 

@@ -20,25 +20,26 @@ INFO:
 
       % Other properties
       rDT
-      args struct = struct; % a struct that contains the fields required (by default) to evaluate the various casadi-functions (objective, constraints, ...)
+      % args struct = struct; % a struct that contains the fields required (by default) to evaluate the various casadi-functions (objective, constraints, ...)
    end
 
    % User attainable symbolic variables:
    properties(SetAccess=private)
       
       % Input variables:
-      initial_condition casadi.SX % a variable that represent the initial condition (a parameter)
+      initial_state casadi.SX % a variable that represent the initial condition (a parameter)
       reference struct = struct;
       T_horizon casadi.SX % the total length of the horizon (in time)
-      quad_cost struct
-      bounds 
+      quad_cost struct = struct;
       decision structor = structor("default_mix","TRYMPC_horizon");
 
+   end
+   properties
       % Expressions:
       constraints struct = struct;
       objective struct = struct;
-      
    end
+
 
 
 
@@ -141,11 +142,11 @@ at each stage k \in {0,...,N-1}
 
          % Prepare structor and arguments
          args = struct;
-         C.constraints.equality = structor("default_mix","vector_mixed");
+         C.constraints.dynamic = structor("default_mix","vector_mixed");
 
          % initial condition constraint:
-         C.initial_condition = casadi.SX.sym('initial_condition',[C.discretizer.model.dim.state,1]);
-         C.constraints.equality.str.initial_condition = C.decision.str.state(:,1) - C.initial_condition;
+         C.initial_state = casadi.SX.sym('initial_state',[C.discretizer.model.dim.state,1]);
+         C.constraints.dynamic.str.initial_condition = C.decision.str.state(:,1) - C.initial_state;
 
          for k = 0:(C.N_horizon-1)
             args.state = C.decision.str.state(:,k+1);
@@ -154,17 +155,16 @@ at each stage k \in {0,...,N-1}
             args.param = C.discretizer.model.param.vec;
             args.Dt = DT(k+1);
             if ~isempty(C.discretizer.Algebraics)
-               C.constraints.equality.str.(['step_',num2str(k+1)]).algebraic = C.discretizer.Algebraics.call(args).out;
+               C.constraints.dynamic.str.(['step_',num2str(k+1)]).integrator = C.discretizer.Algebraics.call(args).out;
             end
-            C.constraints.equality.str.(['step_',num2str(k+1)]).dynamic   = C.decision.str.state(:,k+2) + C.discretizer.Next.call(args).out;
-            
+            C.constraints.dynamic.str.(['step_',num2str(k+1)]).continuity   = C.decision.str.state(:,k+2) + C.discretizer.Next.call(args).out;
          end
 
-         % keep track of fields required:
-         C.args.equality.decision = [];
-         C.args.equality.initial_condition = [];
-         C.args.equality.T_horizon = [];
-         C.args.equality.parameters = [];
+         % % keep track of fields required:
+         % C.args.equality.decision = [];
+         % C.args.equality.initial_condition = [];
+         % C.args.equality.T_horizon = [];
+         % C.args.equality.parameters = [];
          
 
 
@@ -180,13 +180,14 @@ at each stage k \in {0,...,N-1}
                C.objective.quadratic.(type) = casadi.SX.zeros(C.discretizer.model.dim.(type),C.N_horizon);
 
 
-
-               for k = (1:C.N_horizon)+ismember(type,["state","output"]) % states/outputs should be weighted only from k=1 to k=N+1 (note that k is shifted by 1 due to 1-indexing)
+               for k = (1:C.N_horizon)
                   if type == "output"
                      % get output from state vector:
-                     args.state = C.reference.state(:,k);
+                     args.state = C.reference.state(:,k+1);
                      output_k = C.discretizer.model.output.call(args).out;
-                     stage_deviation = output_k - C.reference.output(:,k);
+                     stage_deviation = output_k - C.reference.output(:,k); % note that the reference vector is offset, since the state_0 variable does not have a reference
+                  elseif type == "state"
+                     stage_deviation = C.decision.str.(type)(:,k+1) - C.reference.(type)(:,k); % note that the reference vector is offset, since the state_0 variable does not have a reference
                   else
                      stage_deviation = C.decision.str.(type)(:,k) - C.reference.(type)(:,k);
                   end
@@ -247,9 +248,14 @@ at each stage k \in {0,...,N-1}
             end
          end
 
-         % keep track of fields required:
-         C.args.inequality.decision = [];
-         C.args.inequality.parameter = [];
+         % % keep track of fields required:
+         % C.args.inequality.decision = [];
+         % C.args.inequality.parameter = [];
+
+
+         %% Casadi-Functions
+
+
 
          disp(['done.  ',sec2str(toc(def_time)),' Name: "',char(C.Name),'"'])
       end
@@ -320,10 +326,6 @@ at each stage k \in {0,...,N-1}
          % ===========================
          %%%%%%% Apply the constraints: 
          % prepare casadi-Function (in order to correctly apply parameter values, etc.)
-         Args.decision = C.decision.vec;
-         Args.initial_condition = C.initial_condition;
-         Args.T_horizon = C.T_horizon;
-         Args.parameters = C.discretizer.model.param.vec;
          infields = fieldnames(Args);
          Args.out = [C.constraints.equality.vec; C.constraints.inequality.vec];
          g = casadi.Function('ipopt_constraints',Args,infields,'out');
@@ -424,13 +426,59 @@ at each stage k \in {0,...,N-1}
          end
 
       end
-   end
+
+
+      function args = args_objective(C)
+         args.decision = C.decision.vec;
+         for type = string(fieldnames(C.reference))'
+            args.(['reference_',char(type)]) = C.reference.(type);
+         end
+         args.parameters = C.discretizer.model.param.vec;
+         for type = string(fieldnames(C.quad_cost))'
+            args.(['quad_',char(type)]) = C.quad_cost.(type);
+         end
+      end
+
+      function args = args_inequality(C)
+         args.decision = C.decision.vec;
+         args.parameters = C.discretizer.model.param.vec;
+      end
+
+      function args = args_dynamic(C)
+         args.decision = C.decision.vec;
+         args.parameters = C.discretizer.model.param.vec;
+         args.T_horizon = C.T_horizon;
+         args.initial_state = C.initial_state;
+      end
+
+      
+      function F = make_Functions(C)
+         % Dynamic constraints:
+         args = C.args_dynamic;
+         infields = fieldnames(args);
+         args.out = C.constraints.dynamic.vec;
+         F.dynamic = casadi.Function('F_dynamic_constraints',args,infields,'out');
+
+         % Objective:
+         args = C.args_objective;
+         infields = fieldnames(args);
+         args.out = trympcDOP.sum_structure(C.objective.quadratic);
+         F.objective = casadi.Function('F_objective',args,infields,'out');
+
+         % Inequality constraints:
+         args = C.args_inequality;
+         infields = fieldnames(args);
+         args.out = C.constraints.inequality.vec;
+         F.inequality = casadi.Function('F_inequality_constraints',args,infields,'out');
+
+      end
 
 
 
+   end 
 
 
-   % Internal methods
+   % Static Methods:
    methods(Static)
       function out = sum_structure(S)
          out = [];

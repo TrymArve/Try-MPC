@@ -294,14 +294,6 @@ the integration scheme of your choice.
          %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% RUNGE-KUTTA:
          function ERK_builder
 
-            %{
-OBS!!
-Explicit integrators are only to be used for ODEs, not DAEs...
-            %}
-
-            if C.model.model_type ~= "ODE"
-               TRYMPC2.usererror('explicit integration schemes are only to be used for ODEs. If you model is a DAE, choose an implicit integration scheme.')
-            end
 
             % Buthcer Tableau:
             b = reshape(C.BT_b,[],1);
@@ -339,13 +331,6 @@ Explicit integrators are only to be used for ODEs, not DAEs...
                   C.aux_var.str.(['inc_',num2str(inc)]).state.(['samp_',num2str(s)]) = casadi.SX.sym(['dynamics_inc',num2str(inc),'_samp',num2str(s)],[C.model.dim.state,1]);
                end
             end
-            if C.model.model_type == "DAE"
-               for inc = 1:C.n_increments
-                  for s = 1:samp
-                     C.aux_var.str.(['inc_',num2str(inc)]).algeb.(['samp_',num2str(s)]) = casadi.SX.sym(['algeb_inc',num2str(inc),'_samp',num2str(s)],[C.model.dim.algeb,1]);
-                  end
-               end
-            end
 
             % Prepare variables to simplify creation of integrator:
             in_vars = C.model.args;
@@ -356,11 +341,6 @@ Explicit integrators are only to be used for ODEs, not DAEs...
                   in_vars.state = next_state;
                   for a = 1:samp
                      in_vars.state = in_vars.state + A(s,a)*C.aux_var.str.(['inc_',num2str(inc)]).state.(['samp_',num2str(a)])*dt;
-                  end
-
-                  if C.model.model_type == "DAE"
-                     in_vars.algeb = C.aux_var.str.(['inc_',num2str(inc)]).algeb.(['samp_',num2str(s)]);
-                     aux_expr.str.(['inc_',num2str(inc)]).(['samp_',num2str(s)]).algebraics = C.model.algebraics.call(in_vars).out; % should be equal to zero
                   end
 
                   aux_expr.str.(['inc_',num2str(inc)]).(['samp_',num2str(s)]).dynamics = C.aux_var.str.(['inc_',num2str(inc)]).state.(['samp_',num2str(s)]) - C.model.dynamics.call(in_vars).out;
@@ -387,15 +367,6 @@ Explicit integrators are only to be used for ODEs, not DAEs...
                end
             end
 
-            % If DAE, create algebraic variables for each collocation
-            % point, to ensure the validity of 
-            if C.model.model_type == "DAE"
-               for inc = 1:C.integrator.n_increments
-                  for c = 1:C.integrator.collocation.d
-                     C.aux_var.str.(['inc_',num2str(inc)]).algeb.(['samp_',num2str(c)]) = casadi.SX.sym(['collocation_algeb_inc',num2str(inc),'_samp',num2str(c)],[C.model.dim.algeb,1]);
-                  end
-               end
-            end
 
             %%%%%%%%%%% Create casadi-Function to represent the collocation polynomial p (and dp) to use on each interval:
 
@@ -443,12 +414,6 @@ Explicit integrators are only to be used for ODEs, not DAEs...
                   % variable (state) used to evaluate dynamcis.
                   args.tau = C.collocation.tau(c+1);
                   args_dyn.state = C.aux_var.str.(['inc_',num2str(inc)]).state.(['samp_',num2str(c)]);
-
-                  % If DAE we must include algebraics
-                  if C.model.model_type == "DAE"
-                     args_dyn.algeb = C.aux_var.str.(['inc_',num2str(inc)]).algeb.(['samp_',num2str(c)]);
-                     aux_expr.str.(['inc_',num2str(inc)]).(['samp_',num2str(c)]).algebraics = C.model.algebraics.call(args_dyn).out;
-                  end
 
                   % collocation constraint
                   aux_expr.str.(['inc_',num2str(inc)]).(['samp_',num2str(c)]).dynamics = C.model.dynamics.call(args_dyn).out*dt - dp.F.call(args).out;

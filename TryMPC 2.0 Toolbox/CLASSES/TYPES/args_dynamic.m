@@ -1,4 +1,4 @@
-classdef args_equality
+classdef args_dynamic
    properties
       decision
       initial_condition

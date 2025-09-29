@@ -1,4 +1,4 @@
-classdef args_inequality
+classdef args_bounds
    properties
       decision
       parameters
