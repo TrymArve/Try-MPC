@@ -44,8 +44,8 @@ classdef trympcMODEL
       args % in-arguments to the dynamics and algebraics
 
       % Fast versions: the same as dynamics/algebraics, but arguments are not in a struct, but positional instead. (faster and sometimes more convenient)
-      dynamics_fast 
-      output_fast
+      dynamics_alt
+      output_alt
    end
 
 
@@ -154,9 +154,9 @@ classdef trympcMODEL
 
          % Generate fast versions:
          args = C.args;
-         C.dynamics_fast   = casadi.Function('F_dynamics_fast',  {args.state,args.algeb,args.input,args.param},{C.dynamics.call(  args).out});
+         C.dynamics_alt   = casadi.Function('F_dynamics_fast',  {args.state,args.input,args.param},{C.dynamics.call(  args).out});
          if ismember(C.expression_types,"output")
-            C.output_fast   = casadi.Function('F_output_fast',  {args.state,args.algeb,args.input,args.param},{C.output.call(  args).out});
+            C.output_alt   = casadi.Function('F_output_fast',  {args.state,args.input,args.param},{C.output.call(  args).out});
          end
 
          disp(['done.  ',sec2str(toc(def_time)),' Name: "',char(C.Name),'"'])
@@ -169,7 +169,6 @@ classdef trympcMODEL
    methods
       function args = example_args(C)
          args.state = rand(C.dim.state,1);
-         args.algeb = rand(C.dim.algeb,1);
          args.input = rand(C.dim.input,1);
          args.param = rand(C.dim.param,1);
       end
@@ -193,18 +192,12 @@ classdef trympcMODEL
                disp("input - is the (CasADi) symbolic input vector of your system. It is a 'structor' (see help('state') for more).")
             case "param"
                disp("param - is the (CasADi) symbolic parameter vector of your system. It is a 'structor' (see help('state') for more).")
-            case "algeb"
-               disp("algeb - is the (CasADi) symbolic algebraic-state vector of your system. It is a 'structor' (see help('state') for more).")
             case "dynamics"
                disp("dynamics - is the system dynamic model. I.e. state_dot = dynamics(state,algeb,input,param). It is a CasADi-function.")
-            case "algebraics"
-               disp("algebraics - is the system algebraic model. I.e. 0 = algebraics(state,algeb,input,param). It is a CasADi-function.")
             case "Jac"
                disp("Jac - contains the jacobian of dynamics/algebraics w.r.t. the various variable-vectors. Try for example 'myMODEL.Jac.dynamics.state' or 'myMODEL.Jac.algebraics.input'")
             case "dim"
                disp("dim - contains the dimension of the variable vectors.")
-            case "parameters"
-               disp("parameters - structor containing numeric values for the parameters.")
          end
       end
    end

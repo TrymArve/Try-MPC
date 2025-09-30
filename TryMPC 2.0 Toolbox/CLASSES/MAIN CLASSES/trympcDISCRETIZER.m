@@ -86,7 +86,6 @@ the integration scheme of your choice.
                ERK_builder
 
             case "Implicit Euler"
-               C.integrator.has_aux = true;
 
                C.order = 1;
                C.plicity = "implicit";
@@ -232,7 +231,7 @@ the integration scheme of your choice.
                      C.order = C.collocation.d*2;
                   case "radau"
                      C.order = C.collocation.d*2 - 1;
-                     error('DEVELOPER ERROR: ops, I am unsure if I have built the collocation scheme specifically for Legendre, of if simply choosing Radau point will procude the correct Radau collocation shceme. - Trym')
+                     warning('DEVELOPER ERROR: ops, I am unsure if I have built the collocation scheme specifically for Legendre, of if simply choosing Radau point will procude the correct Radau collocation shceme. - Trym')
                   otherwise
                      error('DEVELOPER ERROR: an invalid colloocation polynomial type was selected')
                end

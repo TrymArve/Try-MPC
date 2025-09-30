@@ -46,4 +46,10 @@ uneq_state.str.pendulum_angle = 0;
 uneq_state.str.cart_speed     = 0;
 uneq_state.str.pendulum_speed = 0;
 
-M.numeric_model = trympcNUMERIC_MODEL("Pendulum Swingup",param,"initial_state",init_state,"unstable_equilibrium_state",uneq_state);
+ref.state = @(t) zeros(4,1).*t;
+ref.input = @(t) 0.*t;
+
+M.numeric_model = trympcNUMERIC_MODEL("Pendulum Swingup",param,...
+     "initial_state",init_state,...
+     "unstable_equilibrium_state",uneq_state,...
+     "ref",ref);

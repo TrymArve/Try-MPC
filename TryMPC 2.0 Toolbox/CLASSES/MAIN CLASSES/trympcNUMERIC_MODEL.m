@@ -1,28 +1,31 @@
 classdef trympcNUMERIC_MODEL
-   properties
-
+   properties(SetAccess=immutable)
       % Give the model instance a name
-      Name
+      Name (1,1) string 
+   end
 
+   properties
       % Specific parameter values for a model
-      param = structor;
+      parameters structor = structor;
 
       % A suggested initial state for a model (for the given parameters)
-      initial_state % structor
-      
-      % A stable equilibrium of a model (for the given parameters)
-      stable_equilibrium_state % structor
-      stable_equilibrium_input% structor
-
-      % An unstable equilibrium of a model (for the given parameters)
-      unstable_equilibrium_state% structor
-      unstable_equilibrium_input% structor
+      initial_state structor % structor
 
       % A reference to track (function_handle: @(t))
-      ref_state
-      ref_algeb
-      ref_input
-      ref_output
+      ref struct = struct % fieldsnames should be members of ["state","input","output"]
+   end
+
+
+   properties
+      % A stable equilibrium of a model (for the given parameters)
+      stable_equilibrium_state % structor
+      stable_equilibrium_input % structor
+      stable_equilibrium_output % structor
+
+      % An unstable equilibrium of a model (for the given parameters)
+      unstable_equilibrium_state % structor
+      unstable_equilibrium_input % structor
+      unstable_equilibrium_output % structor
    end
 
 
@@ -36,42 +39,35 @@ classdef trympcNUMERIC_MODEL
 
             % A suggested initial state for a model (for the given parameters)
             options.initial_state structor
-            options.initial_algeb structor
+
+
+            % references  struct with fields "state", "input" and/or "output" ( @(t) a function of time )
+            options.ref struct
+
+
 
             % A stable equilibrium of a model (for the given parameters)
             options.stable_equilibrium_state structor
-            options.stable_equilibrium_algeb structor
             options.stable_equilibrium_input structor
             options.stable_equilibrium_output structor
 
             % An unstable equilibrium of a model (for the given parameters)
             options.unstable_equilibrium_state structor
-            options.unstable_equilibrium_algeb structor
             options.unstable_equilibrium_input structor
             options.unstable_equilibrium_ouput structor
-
-            % references  ( @(t) a function of time )
-            options.ref_state  function_handle = @(t) [];
-            options.ref_algeb  function_handle = @(t) [];
-            options.ref_input  function_handle = @(t) [];
-            options.ref_output function_handle = @(t) [];
          end
 
          C.Name = Name;
-         C.param = param;
+         C.parameters = param;
 
          Props = ["initial_state",...
-                  "initial_algeb",...
                   "stable_equilibrium_state",...
-                  "stable_equilibrium_algeb",...
                   "stable_equilibrium_input",...
                   "unstable_equilibrium_state",...
-                  "unstable_equilibrium_algeb",...
                   "unstable_equilibrium_input",...
-                  "ref_state",...
-                  "ref_algeb",...
-                  "ref_input",...
-                  "ref_output"];
+                  "ref",...
+                  ];
+
 
          for prop = Props
             if isfield(options,prop)

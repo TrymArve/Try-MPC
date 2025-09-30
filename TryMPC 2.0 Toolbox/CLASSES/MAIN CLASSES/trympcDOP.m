@@ -30,7 +30,7 @@ INFO:
       initial_state casadi.SX % a variable that represent the initial condition (a parameter)
       reference struct = struct;
       T_horizon casadi.SX % the total length of the horizon (in time)
-      quad_cost struct = struct;
+      quad_cost struct = struct; % struct that may contain fields "state", "input", "output", each of which is a vector of weights (symbolic)
       decision structor = structor("default_mix","TRYMPC_horizon");
 
    end
@@ -157,14 +157,8 @@ at each stage k \in {0,...,N-1}
             if ~isempty(C.discretizer.Algebraics)
                C.constraints.dynamic.str.(['step_',num2str(k+1)]).integrator = C.discretizer.Algebraics.call(args).out;
             end
-            C.constraints.dynamic.str.(['step_',num2str(k+1)]).continuity   = C.decision.str.state(:,k+2) + C.discretizer.Next.call(args).out;
+            C.constraints.dynamic.str.(['step_',num2str(k+1)]).continuity   = C.decision.str.state(:,k+2) - C.discretizer.Next.call(args).out;
          end
-
-         % % keep track of fields required:
-         % C.args.equality.decision = [];
-         % C.args.equality.initial_condition = [];
-         % C.args.equality.T_horizon = [];
-         % C.args.equality.parameters = [];
          
 
 
@@ -183,7 +177,7 @@ at each stage k \in {0,...,N-1}
                for k = (1:C.N_horizon)
                   if type == "output"
                      % get output from state vector:
-                     args.state = C.reference.state(:,k+1);
+                     args.state = C.decision.state(:,k+1);
                      output_k = C.discretizer.model.output.call(args).out;
                      stage_deviation = output_k - C.reference.output(:,k); % note that the reference vector is offset, since the state_0 variable does not have a reference
                   elseif type == "state"
@@ -222,7 +216,7 @@ at each stage k \in {0,...,N-1}
                      var_vector = casadi.SX.zeros([C.discretizer.model.dim.output,C.N_horizon]);
                      for k = 1:C.N_horizon
                         % get output from state vector:
-                        args.state = C.decision.state(:,k);
+                        args.state = C.decision.str.state(:,k);
                         var_vector(:,k)  = C.discretizer.model.output.call(args).out;
                      end
                end
@@ -248,24 +242,22 @@ at each stage k \in {0,...,N-1}
             end
          end
 
-         % % keep track of fields required:
-         % C.args.inequality.decision = [];
-         % C.args.inequality.parameter = [];
-
-
-         %% Casadi-Functions
-
-
-
          disp(['done.  ',sec2str(toc(def_time)),' Name: "',char(C.Name),'"'])
       end
    end
 
 
 
-   % USER METHODS:
+
+
+
+
+
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   %%%%%%% USER METHODS:
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    methods
-      function [numeric_decision,sol,solver] = solve(C,numeric_model,options)
+      function [sol,solver] = solve(C,numeric_model,options)
          arguments
             C
 
@@ -273,38 +265,106 @@ at each stage k \in {0,...,N-1}
             numeric_model trympcNUMERIC_MODEL
             options.T_horizon (1,1) double {mustBePositive} = 10;
             options.start_time (1,1) double {mustBeReal} = 0;
+            options.F (1,1) struct = C.make_Functions % a struct that contains the casadi-Functions (hence "F") with the problem formulation
+            options.quad (1,1) struct % struct containing the quadratic weights if relevant
+            %{
+Fields of F:
+-    "dynamic":   contains the dynamic constraints ( dyn(x) = 0 )
+-  "objective":   contains the objective function (to minimize)
+- "inequality":   contains the inequality constraints ( h(x) >= 0 )
+(equality constraints should be included in the inequalities)
+
+Fields of quad:
+-  "state": weight-vector (column) for quadratic states
+-  "input": weight-vector (column) for quadratic inputs
+- "output": weight-vector (column) for quadratic outputs
+            %}
 
             % Settigns:
             options.initial_guess % a vector or a structor
             options.max_iterations (1,1) {mustBeInteger,mustBePositive} % takes priority over the nlpsol options
-            options.nlpsol_options (1,1) struct = struct('print_time',0);
-            
-         end
-
-
-         if ~isfield(options.nlpsol_options,'ipopt')
-            options.nlpsol_options.ipopt.print_level = 5;
-            options.nlpsol_options.ipopt.max_iter = 1000;
-
-            % Default values:
-            % options.nlpsol_options.ipopt.tol = 1e-8;
-            options.nlpsol_options.ipopt.acceptable_tol = 1e-6;
-            options.nlpsol_options.ipopt.compl_inf_tol = 1e-4;
-            options.nlpsol_options.ipopt.constr_viol_tol = 1e-4;
-            options.nlpsol_options.ipopt.dual_inf_tol = 1e-4;
-
-            %%% Some other ipopt-options:
-            % options.ipopt_nlpsol_options.ipopt.hessian_approximation      = 'limited-memory';
-            % options.ipopt_nlpsol_options.ipopt.limited_memory_update_type = 'bfgs';
-            % options.ipopt_nlpsol_options.ipopt.linear_solver              = 'mumps';
-            % options.ipopt_nlpsol_options.ipopt.linear_system_scaling      = 'none';
+            options.nlpsol_options (1,1) struct
+            options.print_level (1,1) double {mustBeInteger,mustBeInRange(options.print_level,0,12)} % takes priority over the nlpsol options
 
          end
 
-         if isfield(options,'max_iterations')
-            options.nlpsol_options.ipopt.max_iter = options.max_iterations;
+         fprintf('Preparing ipopt-solver...  ');
+         def_time = tic;
+
+
+         % =====================================
+         %%%%%%%%%% ENSURE PROPER IPOPT OPTIONS:
+
+         % % Default values:
+         % % options.nlpsol_options.ipopt.tol = 1e-8;
+         % options.nlpsol_options.ipopt.acceptable_tol = 1e-6;
+         % options.nlpsol_options.ipopt.compl_inf_tol = 1e-4;
+         % options.nlpsol_options.ipopt.constr_viol_tol = 1e-4;
+         % options.nlpsol_options.ipopt.dual_inf_tol = 1e-4;
+
+         %%% Some other ipopt-options:
+         % options.ipopt_nlpsol_options.ipopt.hessian_approximation      = 'limited-memory';
+         % options.ipopt_nlpsol_options.ipopt.limited_memory_update_type = 'bfgs';
+         % options.ipopt_nlpsol_options.ipopt.linear_solver              = 'mumps';
+         % options.ipopt_nlpsol_options.ipopt.linear_system_scaling      = 'none';
+
+         %%%%%%% IPOPT Suggestion:
+         nlpsol_options = struct;
+         nlpsol_options.print_time = 0;
+
+         % IPOPT main settings
+         ipopt.tol = 1e-6;                % Overall convergence tolerance
+         ipopt.dual_inf_tol = 1e-6;       % Dual infeasibility tolerance
+         ipopt.constr_viol_tol = 1e-6;    % Constraint violation tolerance
+         ipopt.compl_inf_tol = 1e-6;      % Complementarity tolerance
+
+         % Linear solver
+         ipopt.linear_solver = 'mumps';   % Robust general-purpose solver
+         % Alternatives: 'ma57', 'ma86', 'ma97' (HSL, faster if licensed)
+
+         % Regularization and scaling
+         ipopt.hessian_approximation = 'exact';   % Full Hessian by CasADi
+         % Alternatives: 'limited-memory' (for large-scale problems)
+         % ipopt.limited_memory_update_type = 'bfgs'; % I added this option
+         ipopt.fixed_variable_treatment = 'make_constraint';
+         ipopt.linear_system_scaling = 'mc19';    % Improves conditioning
+
+         % Iteration control
+         ipopt.max_iter = 1000;           % Maximum iterations
+         ipopt.print_level = 5;           % IPOPT output verbosity (0–12)
+         ipopt.print_timing_statistics = 'no';
+
+         % Initialization and step length
+         ipopt.acceptable_tol = 1e-4;     % Early stopping tolerance
+         ipopt.acceptable_iter = 5;       % How many acceptable steps before quit
+         ipopt.bound_relax_factor = 0.0;  % Do not relax bounds artificially
+         ipopt.start_with_resto = 'no';   % Don’t start with restoration phase
+
+         % Initialization & regularization
+         ipopt.mu_strategy           = 'adaptive'; % Barrier update strategy
+         ipopt.mu_init               = 1e-1;      % Initial barrier parameter
+         ipopt.warm_start_init_point = 'yes';     % Warm start if re-solving
+
+         if isfield(options,'nlpsol_options')
+            for name = string(fieldnames(options.nlpsol_options))'
+               nlpsol_options.(name) = options.nlpsol_options.(name);
+            end
+            nlpsol_options.ipopt = ipopt;
+            if isfield(options.nlpsol_options,'ipopt')
+               for name = string(fieldnames(options.nlpsol_options.ipopt))'
+                  nlpsol_options.ipopt.(name) = options.nlpsol_options.ipopt.(name);
+               end
+            end
+         end
+         for name = ["max_iterations", "print_level"]
+            if isfield(options,name)
+               nlpsol_options.ipopt.(name) = options.(name);
+            end
          end
 
+
+         % =====================
+         %%%%%%%% INITIAL GUESS:
          if ~isfield(options,'initial_guess')
             initial_guess = zeros(C.decision.len,1);
          elseif isa(options.initial_guess,'double')
@@ -317,6 +377,13 @@ at each stage k \in {0,...,N-1}
          end
 
 
+
+         % ===================================================
+         % Compute sampling times (time of the various stages)
+         sampling_times = options.start_time + cumsum(C.rDT).*options.T_horizon;
+
+
+
          % ===========================
          % Apply the decision vector:
          solver_def.x = C.decision.vec;
@@ -324,87 +391,108 @@ at each stage k \in {0,...,N-1}
 
 
          % ===========================
-         %%%%%%% Apply the constraints: 
-         % prepare casadi-Function (in order to correctly apply parameter values, etc.)
-         infields = fieldnames(Args);
-         Args.out = [C.constraints.equality.vec; C.constraints.inequality.vec];
-         g = casadi.Function('ipopt_constraints',Args,infields,'out');
-
-         % generate expression:
-         Args = struct;
-         Args.decision = C.decision.vec;
-         Args.initial_condition = numeric_model.initial_state.vec;
-         Args.T_horizon = options.T_horizon;
-         Args.parameters = numeric_model.param.vec;
-         solver_def.g = g.call(Args).out;
-
-         % Define bounds (0 < eq(x) < 0) and (0 < in(x) < inf)
-         lb_eq = zeros(C.constraints.equality.len,1);
-         ub_eq = lb_eq;
-         lb_in = zeros(C.constraints.inequality.len,1);
-         ub_in = inf(C.constraints.inequality.len,1);
-
-
-
-
-         % =======================
-         %&&&&& Apply objective:
-         % create casadi-Function
-         Args = struct;
-         Args.decision = C.decision.vec;
-         for type = ["state","algeb","input","output"] 
-            if isfield(C.reference,type)
-               Args.(['reference_',char(type)]) = C.reference.(type);
-            end
+         %%%%%%% Create problem (call functions where all but decision variables are numeric)
+         
+         % inequality constrainst:
+         ineq_args = struct;
+         ineq_args.decision = C.decision.vec;
+         ineq_args.parameters = numeric_model.parameters.vec;
+         if C.constraints.inequality.len > 0
+         inequalities = options.F.inequality.call(ineq_args).out;
+         ineq_ones = ones(length(inequalities),1);
+         else
+            inequalities = [];
+            ineq_ones = [];
          end
-         Args.parameters = C.discretizer.model.param.vec;
-         infields = fieldnames(Args);
-         Args.out = trympcDOP.sum_structure(C.objective);
-         f = casadi.Function('ipopt_objective',Args,infields,'out');
 
-         % gererate expression
-         Args = struct;
-         Args.decision = C.decision.vec;
-         for type = ["state","algeb","input","output"]
-            if isfield(C.reference,type)
-               Args.(['reference_',char(type)]) = numeric_model.(['ref_',char(type)])(options.start_time + cumsum(C.rDT).*options.T_horizon);
+         % Dynamic constraints:
+         dyn_args = ineq_args;
+         dyn_args.T_horizon = options.T_horizon;
+         dyn_args.initial_state = numeric_model.initial_state.vec;
+         dynamic_constraints = options.F.dynamic.call(dyn_args).out;
+         dyn_zero = zeros(length(dynamic_constraints),1);
+
+         % Objective:
+         obj_args = struct;
+         obj_args.decision = C.decision.vec;
+         obj_args.parameters = numeric_model.parameters.vec;
+         for type = string(fieldnames(C.quad_cost))'
+            if ~isfield(numeric_model.ref,type)
+               TRYMPC.usererror(['The numeric model has not defined a reference for "',char(type),'"'])
             end
+            if ~isfield(options.quad,type)
+               TRYMPC.usererror(['The quadratic cost vector "quad.',char(type),'" is not provided as argument for "',char(type),'"'])
+            end
+            obj_args.(['reference_',char(type)]) = numeric_model.ref.(type)(sampling_times);
+            obj_args.(['quad_',char(type)]) = reshape(options.quad.(type),[],1);
          end
-         Args.parameters = numeric_model.param.vec;
-         solver_def.f = f.call(Args).out;
+         obj = options.F.objective.call(obj_args).out;
+
+
+         solver_def.g = [dynamic_constraints; inequalities];
+         solver_def.f = obj;
+
+         lb = [dyn_zero;ineq_ones*0];
+         ub = [dyn_zero;ineq_ones*inf];
 
 
 
 
          % ======================
          %%%%%%%%% Define solver:
-         solver = casadi.nlpsol('solver', 'ipopt', solver_def, options.nlpsol_options);
+         solver = casadi.nlpsol('solver', 'ipopt', solver_def, nlpsol_options);
 
 
-
+         
 
          % ===================
          %%%%%%%% CALL IPOPT:
-         tic
-         sol = solver('x0',initial_guess,... % Initial guess (of decision variables / primal solution)
-                      'lbg', [lb_eq; lb_in],...  % Lower bound on inequality vector "g" in casadi-language
-                      'ubg', [ub_eq; ub_in]);    % Upper bound on inequality vector "g" in casadi-language
-         solve_time = toc;
-         numeric_decision = C.decision.retrieve(full(sol.x));
+         disp(['done.  ',sec2str(toc(def_time)),' Name: "',char(C.Name),'"'])
+         fprintf('solving...  ');
+         solve_time = tic;
+         sol_ipopt = solver('x0',initial_guess,... % Initial guess (of decision variables / primal solution)
+                      'lbg', lb,...  % Lower bound on inequality vector "g" in casadi-language
+                      'ubg', ub);    % Upper bound on inequality vector "g" in casadi-language
+         solve_time = toc(solve_time);
+         disp(['done.  ',sec2str(solve_time)])
+         numeric_decision = full(sol_ipopt.x);
 
+
+
+
+         % ===========================================
+         %%%%%%%%% Retrieve solutions and constraints:
+         sol.ipopt = sol_ipopt;
+         sol.decision = C.decision.retrieve(numeric_decision);
+
+         dyn_args.decision = numeric_decision;
+         ineq_args.decision = numeric_decision;
+         obj_args.decision = numeric_decision;
+
+         dynamic = full(options.F.dynamic.call(dyn_args).out);
+         sol.constraints.dynamic = C.constraints.dynamic.retrieve(dynamic);
+         
+         ineq = full(options.F.inequality.call(ineq_args).out);
+         sol.constraints.inequality = C.constraints.inequality.retrieve(ineq);
+
+
+         % ========================
+         %%%%%%%%%% Display Result:
          disp( '================== IPOPT return message ===========')
          disp(['      -- return status: ',solver.stats.return_status])
          disp(['      --    solve time: ',sec2str(solve_time)])
          disp(['      -- N. iterations: ',num2str(solver.stats.iter_count)])
-         % disp( '   Convergence Measure: ')
-         % disp(['              -- stationarity: ',num2str(stationarity)]) % C.archive.optimizations{end}.convergence.stationarity(end)
-         % disp(['              --     equality: ',num2str(equality)]) % C.archive.optimizations{end}.convergence.equality(end)
-         % disp(['              --   inequality: ',num2str(inequality)]) % C.archive.optimizations{end}.convergence.inequality(end)
+         disp( '   Constraint Satisfaction: ')
+         disp(['              --      dynamic: ',num2str(norm(dynamic,1)),'  ( ||dyn(x)||_1 )']) % C.archive.optimizations{end}.convergence.equality(end)
+         disp(['              --   inequality: ',num2str(min(ineq)),'  ( min(ineq(x)) )']) % C.archive.optimizations{end}.convergence.inequality(end)
          disp( '====================================================')
       end
 
 
 
+
+      % +++++++++++++++++++++++++++
+      %%%%%%%%%% DISPLAY SOLUTION:
       function Fig = show(C,decision,types)
          arguments
             C
@@ -428,22 +516,27 @@ at each stage k \in {0,...,N-1}
       end
 
 
+
+      % ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+      %%%%%%%%%% GET ARGUMENTS STRUCT FOR CALLING CASADI-FUNCTIONS:
+
+      % OBJECTIVE
       function args = args_objective(C)
          args.decision = C.decision.vec;
-         for type = string(fieldnames(C.reference))'
-            args.(['reference_',char(type)]) = C.reference.(type);
-         end
          args.parameters = C.discretizer.model.param.vec;
          for type = string(fieldnames(C.quad_cost))'
+            args.(['reference_',char(type)]) = C.reference.(type);
             args.(['quad_',char(type)]) = C.quad_cost.(type);
          end
       end
 
+      % INEQUALITY CONSTRAINTS
       function args = args_inequality(C)
          args.decision = C.decision.vec;
          args.parameters = C.discretizer.model.param.vec;
       end
 
+      % DYNAMIC CONSTRAINTS
       function args = args_dynamic(C)
          args.decision = C.decision.vec;
          args.parameters = C.discretizer.model.param.vec;
@@ -451,7 +544,11 @@ at each stage k \in {0,...,N-1}
          args.initial_state = C.initial_state;
       end
 
-      
+
+
+
+      % ++++++++++++++++++++++++++++++++++++++++++++++++
+      %%%%%%%%%% CREATE CASADI-FUNCTIONS OF THE PROBLEM:
       function F = make_Functions(C)
          % Dynamic constraints:
          args = C.args_dynamic;
@@ -470,7 +567,6 @@ at each stage k \in {0,...,N-1}
          infields = fieldnames(args);
          args.out = C.constraints.inequality.vec;
          F.inequality = casadi.Function('F_inequality_constraints',args,infields,'out');
-
       end
 
 
@@ -478,8 +574,17 @@ at each stage k \in {0,...,N-1}
    end 
 
 
-   % Static Methods:
+
+
+
+
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   %%%%%%% Static Methods:
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    methods(Static)
+
+      % ++++++++++++++++++++++++++++++++++++
+      %%%%%%%%%% SUM ALL FIELDS OF A STRUCT:
       function out = sum_structure(S)
          out = [];
          for name = string(fieldnames(S))'

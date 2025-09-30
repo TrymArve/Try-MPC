@@ -6,7 +6,7 @@ fresh
 M_PC = trympcmodels("Pendulum_on_Cart");
 
 model_number = 1;
-parameters = M_PC.numeric_model(model_number).param.vec;
+parameters = M_PC.numeric_model(model_number).parameters.vec;
 initial_state = M_PC.numeric_model(model_number).initial_state.vec;
 tf = 10;
 
@@ -23,7 +23,7 @@ fast = [];
 for i = 1:1000
    args = M_PC.example_args;
    tic; num_dyn      = M_PC.dynamics.call(args).out; slow(end+1) = toc;
-   tic; num_dyn_fast = M_PC.dynamics_fast(args.state,args.input,args.param); fast(end+1) = toc;
+   tic; num_dyn_fast = M_PC.dynamics_alt(args.state,args.input,args.param); fast(end+1) = toc;
 end
 disp(['------ number of tests: ', num2str(i)])
 disp("dyn     : " + sec2str(max(slow)) +" "+ sec2str(mean(slow)) +" "+ sec2str(median(slow)) +" "+ sec2str(min(slow)))
@@ -41,7 +41,7 @@ low_tol = 1e-6;
 % get a true solution:
 opts = odeset(RelTol=high_tol,AbsTol=high_tol);
 tic
-[t_sim,s_sim] = ode45(@(t,s) full(M_PC.dynamics_fast(s,u0,parameters)), [0, tf], initial_state,opts);
+[t_sim,s_sim] = ode45(@(t,s) full(M_PC.dynamics_alt(s,u0,parameters)), [0, tf], initial_state,opts);
 high_time = toc;
 
 plot(t_sim,s_sim,Color='g'); hold on
@@ -52,21 +52,21 @@ plot([0 10],[1 1]*pi*2,'k--',HandleVisibility='off')
 % reduce the abs tolerance for speed, and compare:
 opts = odeset(RelTol=high_tol,AbsTol=low_abs_tol);
 tic
-[t_sim,s_sim] = ode45(@(t,s) full(M_PC.dynamics_fast(s,u0,parameters)), [0, tf], initial_state,opts);
+[t_sim,s_sim] = ode45(@(t,s) full(M_PC.dynamics_alt(s,u0,parameters)), [0, tf], initial_state,opts);
 high_rel_time = toc;
 plot(t_sim,s_sim,Color='b');
 
 % reduce the rel tolerance for speed, and compare:
 opts = odeset(RelTol=low_rel_tol,AbsTol=high_tol);
 tic
-[t_sim,s_sim] = ode45(@(t,s) full(M_PC.dynamics_fast(s,u0,parameters)), [0, tf], initial_state,opts);
+[t_sim,s_sim] = ode45(@(t,s) full(M_PC.dynamics_alt(s,u0,parameters)), [0, tf], initial_state,opts);
 high_abs_time = toc;
 plot(t_sim,s_sim,Color='r');
 
 % reduce the rel tolerance for speed, and compare:
 opts = odeset(RelTol=low_tol,AbsTol=low_tol);
 tic
-[t_sim,s_sim] = ode45(@(t,s) full(M_PC.dynamics_fast(s,u0,parameters)), [0, tf], initial_state,opts);
+[t_sim,s_sim] = ode45(@(t,s) full(M_PC.dynamics_alt(s,u0,parameters)), [0, tf], initial_state,opts);
 low_time = toc;
 plot(t_sim,s_sim,Color='m');
 
@@ -102,10 +102,9 @@ disp("ERK4     : (black)" + sec2str(ERK4_time))
 %% Create NLP (cart pendulum)
 fresh
 M_PC = trympcmodels("Pendulum_on_Cart");
-model_number = 1;
-num_mod = M_PC.numeric_model(model_number);
+num_mod = M_PC.numeric_model(1);
 
-D_IRK = trympcDISCRETIZER("IRK",M_PC,"IRK4 (L-stable)");
+D_IRK = trympcDISCRETIZER("IRK",M_PC,"Crank-Nicolson (Implicit)","n_increments",2);
 
 lb_state = structor;
 lb_state.str.cart_position = -5;
@@ -119,50 +118,39 @@ ub_state.str.pendulum_angle = pi*2;
 ub_state.str.cart_speed = 5;
 ub_state.str.pendulum_speed = pi;
 
-input_bounds = [-1 1]*10;
+input_bounds = [-1 1]*1;
+
+% DOP   = trympcDOP("PC Multiple Shooting",D_IRK,...
+%                   N_horizon=5,...
+%                   quad_cost=["state","input"],...
+%                   bounds_state=[lb_state.vec ub_state.vec],...
+%                   bounds_input=input_bounds);
 
 DOP   = trympcDOP("PC Multiple Shooting",D_IRK,...
                   N_horizon=100,...
-                  quad_cost=["state","input"],...
-                  bounds_state=[lb_state.vec ub_state.vec],...
-                  bounds_input=input_bounds);
+                  quad_cost=["state","input"],bounds_input=input_bounds);
 
 
+%% Solve
+num_mod.parameters.str.pendulum_length = 2;
+num_mod.initial_state.str.pendulum_angle = 0.01;
 
-num_mod.initial_state.str.pendulum_angle = pi;
+quad.state =  10*ones(4,1);
+quad.input = 1;
 
-solution = DOP.solve(num_mod);
-DOP.show(solution)
+T = 10;
 
-%% Create NLP (energy)
-fresh
-M_PC = trympcmodels("Pendulum_on_Cart_ODE_energy_output");
-model_number = 1;
-num_mod = M_PC.numeric_model(model_number);
-
-D_IRK = trympcDISCRETIZER("IRK",M_PC,"IRK4 (L-stable)");
-
-lb_state = structor;
-lb_state.str.cart_position = -5;
-lb_state.str.pendulum_angle = -pi*2;
-lb_state.str.cart_speed = -5;
-lb_state.str.pendulum_speed = -pi;
-
-ub_state = structor;
-ub_state.str.cart_pos = 5;
-ub_state.str.pendulum_angle = pi*2;
-ub_state.str.cart_speed = 5;
-ub_state.str.pendulum_speed = pi;
-
-input_bounds = [-1 1]*10;
-
-DOP   = trympcDOP("PC Multiple Shooting",D_IRK,...
-                  "N_horizon",50,...
-                  "quad_Y",[1 1], ...
-                  "bounds_state",[lb_state.vec ub_state.vec],...
-                  "bounds_input",input_bounds);
+[solution,solver] = DOP.solve(num_mod,quad=quad,T_horizon=T);
+DOP.show(solution.decision);
 
 
+%% Simulate result
 
-solution = DOP.solve(num_mod);
-DOP.show(solution)
+nmpc = NMPC("Classic NMPC of Pendulum",DOP);
+
+nmpc.numeric_model = num_mod;
+nmpc.toggle_archive = true;
+nmpc.quad = quad;
+nmp.T_horizon = 10;
+
+
