@@ -29,7 +29,7 @@ M = trympcMODEL("Pendulum on Cart (ODE)",...
    "dynamics",dynamics);
 
 param = structor;
-param.str.pendulum_length = 0.5;
+param.str.pendulum_length = 2;
 param.str.gravity         = 9.81;
 param.str.mass_cart       = 2;
 param.str.mass_pendulum       = 2;

@@ -21,7 +21,7 @@ classdef (Abstract) trympcCONTROLLER < handle
             state (:,1) double
          end
          arguments(Output)
-            u function_handle % on form @(t,x) to accomodate the ode45 solver
+            u function_handle % on form @(t,x) to match the ode45 solver
          end
          u = C.internal_control(time,state);
       end

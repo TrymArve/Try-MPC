@@ -132,25 +132,29 @@ DOP   = trympcDOP("PC Multiple Shooting",D_IRK,...
 
 
 %% Solve
-num_mod.parameters.str.pendulum_length = 2;
-num_mod.initial_state.str.pendulum_angle = 0.01;
+T = 10;
 
 quad.state =  10*ones(4,1);
 quad.input = 1;
-
-T = 10;
 
 [solution,solver] = DOP.solve(num_mod,quad=quad,T_horizon=T);
 DOP.show(solution.decision);
 
 
 %% Simulate result
+quad.state =  10*ones(4,1);
+quad.input = 1;
 
 nmpc = NMPC("Classic NMPC of Pendulum",DOP);
 
 nmpc.numeric_model = num_mod;
-nmpc.toggle_archive = true;
+nmpc.toggle_archive = true; 
 nmpc.quad = quad;
-nmp.T_horizon = 10;
+nmpc.T_horizon = 10;
 
-
+sim_model = @(t,state,u) full(M_PC.dynamics_pos(state,u,num_mod.parameters.vec));
+sim = trympcSIMULATION(sim_model,...
+                       num_mod.initial_state.vec,...
+                       1,...
+                       0.1,...
+                       nmpc);

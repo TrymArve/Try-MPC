@@ -21,7 +21,7 @@ classdef NMPC < trympcCONTROLLER
 
    properties(SetAccess=private)
       %%% Archive to store info of each solve:
-      archive (1,1)
+      archive (:,1) = struct([]);
    end
 
    properties(Hidden,SetAccess=private)
@@ -173,7 +173,8 @@ classdef NMPC < trympcCONTROLLER
 
          % ======================
          %%%%%%%%% Define solver:
-         C.casadi_solver = casadi.nlpsol('solver', 'ipopt', solver_def, C.nlpsol_options);
+         % C.casadi_solver = casadi.nlpsol('solver', 'ipopt', solver_def, C.nlpsol_options);
+         C.casadi_solver = casadi.nlpsol('solver', 'ipopt', solver_def); ' try to make the options work...
 
 
 
@@ -196,8 +197,10 @@ classdef NMPC < trympcCONTROLLER
          C.nlp_parameters.initial_state = state;
          C.nlp_parameters.parameters = C.numeric_model.parameters.vec;
          C.nlp_parameters.T_horizon = C.T_horizon;
+         ref_times = {sampling_times};
+         ref_times{2} = [time sampling_times(1:end-1)];
          for type = string(fieldnames(C.dop.quad_cost))'
-            C.nlp_parameters.(['reference_',char(type)]) = C.numeric_model.(['reference_',char(type)])(sampling_times);
+            C.nlp_parameters.(['reference_',char(type)]) = C.numeric_model.ref.(type)(ref_times{1+(type=="input")}); % states/output use k=1,...N, and inputs use k=0,...N-1
             C.nlp_parameters.(['quad_',char(type)]) = C.quad.(type);
          end
 
@@ -226,8 +229,8 @@ classdef NMPC < trympcCONTROLLER
 
          % ==============================
          %%%%%% EXTRACT CONTROL VARIABLE:
-         u_traj = C.primal(C.dop.decision.dim.input);
-         u = @(t) interp1(sampling_times',u_traj',t)';
+         u_traj = reshape(C.primal(C.dop.decision.ind.input),size(C.dop.decision.ind.input));
+         u = @(t,~) interp1(ref_times{2}',u_traj',t')';
 
       end
 

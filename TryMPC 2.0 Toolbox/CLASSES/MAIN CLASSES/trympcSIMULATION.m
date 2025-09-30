@@ -5,9 +5,9 @@ classdef trympcSIMULATION
    properties(SetAccess = immutable)
       
       %%%%% SIMULATION RESULTS
-      states
-      inputs
-      times
+      States
+      Inputs
+      Times
 
       %%%%% INFO ABOUT SIMULATION
       % Controller
@@ -24,28 +24,32 @@ classdef trympcSIMULATION
 
    end
 
+   properties(Dependent)
+      states
+      inputs
+      times
+   end
 
 
 
 
-   methods(Static)
-      function C = trympcSIMULATION(sim_model,initial_state,duration,sampling_time,options)
+
+   methods
+      function C = trympcSIMULATION(sim_model,initial_state,duration,sampling_time,controller,options)
          arguments
             %%% Fundamental Arguments:
-            sim_model (1,1) funciton_handle % on form @(t,x,u) (used by "odeXX" as @(t,x) sim_model(t,x,K(t)))
+            sim_model (1,1) function_handle % on form @(t,x,u) (used by "odeXX" as @(t,x) sim_model(t,x,K(t)))
             initial_state (:,1) {double,string} 
             duration (1,1) double {mustBePositive}
             sampling_time (1,1) double {mustBePositive}
-
-            %%% Main Options:
-            options.controller {mustBeA(options.controller,["trympcCONTROLLER","double","function_handle"])}
+            controller (1,1) {mustBeA(controller,["trympcCONTROLLER","double","function_handle"])}
             %{
 The input must either be a controller class inherited from
 trympcCONTROLLER --which produces function_handles-- or a function handle
 directly. 
-The function handle should be on the form @(t), i.e. only a function of
-time, and produce a double (dim_input,1)
-Alternatively, one may provide a double vector directly, in which the
+The function handle should be on the form @(time,state), i.e. only a function of
+time and state, and produce a double (dim_input,1)
+Alternatively, one may provide a 'double'-vector directly, in which the
 control signal is consant.
             %}
             
@@ -69,55 +73,20 @@ measurement to the controller rather than the current measurement (which is repo
          end
 
 
-         if isfield(options,'controller')
-            if isa(options.controller,'double')
-               make_controller = @(~,~) (@(~) options.controller); % returns a function_handle, that only returns the constant input
-            elseif isa(options.controller,'function_handle')
-               make_controller = @(~,~) options.controller; % just return the function handle that was privided.
-            elseif isa(options.controller,'trymocCONTROLLER')
-               make_controller = @options.controller.control; % turn "make_controller" into an alias for the "control" function of the controller.
-            end
+         if isa(controller,'double')
+            make_controller = @(~,~) (@(~,~) controller); % returns a function_handle, that only returns the constant input
+            C.controller_name = "constant";
+         elseif isa(controller,'function_handle')
+            make_controller = @(~,~) controller; % just return the function handle that was privided.
+            C.controller_name = "a function_handle";
+         elseif isa(controller,'trympcCONTROLLER')
+            make_controller = @controller.control; % turn "make_controller" into an alias for the "control" function of the controller.
+            C.controller_name = controller.Name;
+            C.controller_ID = controller.ID;
          end
-         % Prepare misc:
-         end_time = options.start_time + duration;
-         sampling_time = max(sampling_time,duration);
-         C.states = dictionary;
-         C.inputs = dictionary;
-         C.times = dictionary;
-         counter = 1;
-
-         % Prepare variables:
-         time = options.start_time;
-         state = {initial_state, initial_state}; % [current_state, previous_state]
-         
-         
-
-         % Simulate:
-         while time < end_time
-
-            K = make_controller(time,state); % produces a function handle @(t)
-            [time_sim,state_sim] = options.ode_solver(@(t,s) sim_model(t,s,K(t)), time+[0,sampling_time], state{1+C.control_delay}, options.ode_options);
-
-            % store simulation
-            C.states(counter) = state_sim';
-            C.times(counter) = time_sim';
-            C.inputs(counter) = K(time_sim');
-
-
-            state{2} = state{1};        % store previous solution
-            state{1} = state_sim(1,:)'; % update current solution
-
-            counter = counter + 1;
-         end
-
-
-
 
 
          %%%%% SET CLASS PROPERTIES:
-         % Controller
-         C.controller_name = options.controller.Name;
-         C.controller_ID = optins.controller.ID;
          % timing
          C.duration = duration;
          C.start_time = options.start_time;
@@ -127,6 +96,50 @@ measurement to the controller rather than the current measurement (which is repo
          C.ode_options = options.ode_options;
 
 
+         % Prepare misc:
+         odeXX = str2func(C.ode_solver);
+         end_time = C.start_time + duration;
+         sampling_time = min(sampling_time,duration);
+         counter = 1;
+
+         % Prepare variables:
+         time = C.start_time;
+         state = {initial_state, initial_state}; % [current_state, previous_state]
+         
+         
+
+         % Simulate:
+         while time < end_time
+
+            K = make_controller(time,state{1+C.control_delay}); % produces a function handle @(t,s)
+            [time_sim,state_sim] = odeXX(@(t,s) sim_model(t,s,K(t,s)), time+[0,sampling_time], state{1}, C.ode_options);
+
+            % store simulation
+            C.States{counter} = state_sim';
+            C.Times{counter} = time_sim';
+            C.Inputs{counter} = K(time_sim');
+
+            
+            % UPDATE:
+            state{2} = state{1};        % store previous solution
+            state{1} = state_sim(1,:)'; % update current solution
+            time = time + sampling_time; % increment time
+            counter = counter + 1; % increment counter
+         end
+
+
+
+      end
+
+
+      function traj = get.states(C)
+         traj = horzcat(C.States{:});
+      end
+      function traj = get.inputs(C)
+         traj = horzcat(C.Inputs{:});
+      end
+      function traj = get.times(C)
+         traj = horzcat(C.Times{:});
       end
    end
 

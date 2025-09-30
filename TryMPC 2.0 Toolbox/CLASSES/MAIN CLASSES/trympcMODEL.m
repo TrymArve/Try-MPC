@@ -43,9 +43,9 @@ classdef trympcMODEL
       % Struct holding the all variables, to be used for function calls
       args % in-arguments to the dynamics and algebraics
 
-      % Fast versions: the same as dynamics/algebraics, but arguments are not in a struct, but positional instead. (faster and sometimes more convenient)
-      dynamics_alt
-      output_alt
+      % Agrumental versions: the same as dynamics/algebraics, but arguments are not in a struct, but positional instead. (faster and sometimes more convenient)
+      dynamics_pos
+      output_pos
    end
 
 
@@ -154,9 +154,9 @@ classdef trympcMODEL
 
          % Generate fast versions:
          args = C.args;
-         C.dynamics_alt   = casadi.Function('F_dynamics_fast',  {args.state,args.input,args.param},{C.dynamics.call(  args).out});
+         C.dynamics_pos   = casadi.Function('F_dynamics_sim',  {args.state,args.input,args.param},{C.dynamics.call(  args).out});
          if ismember(C.expression_types,"output")
-            C.output_alt   = casadi.Function('F_output_fast',  {args.state,args.input,args.param},{C.output.call(  args).out});
+            C.output_pos   = casadi.Function('F_output_sim',  {args.state,args.input,args.param},{C.output.call(  args).out});
          end
 
          disp(['done.  ',sec2str(toc(def_time)),' Name: "',char(C.Name),'"'])
